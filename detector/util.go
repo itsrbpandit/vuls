@@ -1,5 +1,4 @@
 //go:build !scanner
-// +build !scanner
 
 package detector
 
@@ -134,7 +133,7 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 
 				// TODO commented out because  a bug of diff logic when multiple oval defs found for a certain CVE-ID and same updated_at
 				// if these OVAL defs have different affected packages, this logic detects as updated.
-				// This logic will be uncomented after integration with gost https://github.com/vulsio/gost
+				// This logic will be uncommented after integration with gost https://github.com/vulsio/gost
 				// } else if isCveFixed(v, previous) {
 				// updated[v.CveID] = v
 				// logging.Log.Debugf("fixed: %s", v.CveID)
@@ -181,7 +180,7 @@ func getMinusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 }
 
 func isCveInfoUpdated(cveID string, previous, current models.ScanResult) bool {
-	cTypes := append([]models.CveContentType{models.Nvd, models.Jvn}, models.GetCveContentTypes(current.Family)...)
+	cTypes := append([]models.CveContentType{models.Mitre, models.Nvd, models.Jvn}, models.GetCveContentTypes(current.Family)...)
 
 	prevLastModified := map[models.CveContentType][]time.Time{}
 	preVinfo, ok := previous.ScannedCves[cveID]

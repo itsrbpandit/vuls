@@ -4,7 +4,6 @@ package discover
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -15,7 +14,7 @@ import (
 )
 
 // ActiveHosts ...
-func ActiveHosts(cidr string, outputFile string, snmpVersion string) error {
+func ActiveHosts(cidr string, outputFile string, snmpVersion string, community string) error {
 	scanner := pingscanner.PingScanner{
 		CIDR: cidr,
 		PingOptions: []string{
@@ -42,7 +41,7 @@ func ActiveHosts(cidr string, outputFile string, snmpVersion string) error {
 
 	servers := make(config.DiscoverToml)
 	for _, activeHost := range activeHosts {
-		cpes, err := executeSnmp2cpe(activeHost, snmpVersion)
+		cpes, err := executeSnmp2cpe(activeHost, snmpVersion, community)
 		if err != nil {
 			fmt.Printf("failed to execute snmp2cpe. err: %v\n", err)
 			continue
@@ -100,9 +99,9 @@ func ActiveHosts(cidr string, outputFile string, snmpVersion string) error {
 	return nil
 }
 
-func executeSnmp2cpe(addr string, snmpVersion string) (cpes map[string][]string, err error) {
+func executeSnmp2cpe(addr string, snmpVersion string, community string) (cpes map[string][]string, err error) {
 	fmt.Printf("%s: Execute snmp2cpe...\n", addr)
-	result, err := exec.Command("./snmp2cpe", snmpVersion, addr, "public").CombinedOutput()
+	result, err := exec.Command("./snmp2cpe", snmpVersion, addr, community).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute snmp2cpe. err: %v", err)
 	}
@@ -111,7 +110,7 @@ func executeSnmp2cpe(addr string, snmpVersion string) (cpes map[string][]string,
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert snmp2cpe result. err: %v", err)
 	}
-	if _, err := io.WriteString(stdin, string(result)); err != nil {
+	if _, err := stdin.Write(result); err != nil {
 		return nil, fmt.Errorf("failed to write to stdIn. err: %v", err)
 	}
 	stdin.Close()

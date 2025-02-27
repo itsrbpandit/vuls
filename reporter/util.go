@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"github.com/future-architect/vuls/models"
 	"github.com/gosuri/uitable"
 	"github.com/olekukonko/tablewriter"
-	"golang.org/x/exp/slices"
 	"golang.org/x/xerrors"
 )
 
@@ -204,6 +204,7 @@ func formatOneLineSummary(rs ...models.ScanResult) string {
 				r.FormatUpdatablePkgsSummary(),
 				r.FormatExploitCveSummary(),
 				r.FormatMetasploitCveSummary(),
+				r.FormatKEVCveSummary(),
 				r.FormatAlertSummary(),
 			}
 		} else {
@@ -283,6 +284,17 @@ No CVE-IDs are found in updatable packages.
 			// fmt.Sprintf("%4.1f", v2max),
 			// fmt.Sprintf("%4.1f", v3max),
 			exploits,
+			func() string {
+				if len(vinfo.KEVs) == 0 {
+					return ""
+				}
+				if slices.ContainsFunc(vinfo.KEVs, func(e models.KEV) bool {
+					return e.Type == models.CISAKEVType
+				}) {
+					return string(models.CISAKEVType)
+				}
+				return string(models.VulnCheckKEVType)
+			}(),
 			fmt.Sprintf("%9s", vinfo.AlertDict.FormatSource()),
 			fmt.Sprintf("%7s", vinfo.PatchStatus(r.Packages)),
 			packnames,
@@ -298,6 +310,7 @@ No CVE-IDs are found in updatable packages.
 		// "v3",
 		// "v2",
 		"PoC",
+		"KEV",
 		"Alert",
 		"Fixed",
 		// "NVD",
@@ -337,16 +350,24 @@ No CVE-IDs are found in updatable packages.
 	for _, vuln := range r.ScannedCves.ToSortedSlice() {
 		data := [][]string{}
 		data = append(data, []string{"Max Score", vuln.FormatMaxCvssScore()})
+		for _, cvss := range vuln.Cvss40Scores() {
+			if cvssstr := cvss.Value.Format(); cvssstr != "" {
+				data = append(data, []string{string(cvss.Type), cvssstr})
+			}
+		}
 		for _, cvss := range vuln.Cvss3Scores() {
 			if cvssstr := cvss.Value.Format(); cvssstr != "" {
 				data = append(data, []string{string(cvss.Type), cvssstr})
 			}
 		}
-
 		for _, cvss := range vuln.Cvss2Scores() {
 			if cvssstr := cvss.Value.Format(); cvssstr != "" {
 				data = append(data, []string{string(cvss.Type), cvssstr})
 			}
+		}
+
+		for _, ssvc := range vuln.CveContents.SSVC() {
+			data = append(data, []string{fmt.Sprintf("SSVC[%s]", ssvc.Type), fmt.Sprintf("Exploitation    : %s\nAutomatable     : %s\nTechnicalImpact : %s", ssvc.Value.Exploitation, ssvc.Value.Automatable, ssvc.Value.TechnicalImpact)})
 		}
 
 		data = append(data, []string{"Summary", vuln.Summaries(
@@ -448,8 +469,14 @@ No CVE-IDs are found in updatable packages.
 				ds = append(ds, []string{"CWE", fmt.Sprintf("[OWASP(%s) Top%s] %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
 				top10URLs[year] = append(top10URLs[year], info.URL)
 			}
-			slices.SortFunc(ds, func(a, b []string) bool {
-				return a[1] < b[1]
+			slices.SortFunc(ds, func(a, b []string) int {
+				if a[1] < b[1] {
+					return -1
+				}
+				if a[1] > b[1] {
+					return +1
+				}
+				return 0
 			})
 			data = append(data, ds...)
 
@@ -458,8 +485,14 @@ No CVE-IDs are found in updatable packages.
 				ds = append(ds, []string{"CWE", fmt.Sprintf("[CWE(%s) Top%s] %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
 				cweTop25URLs[year] = append(cweTop25URLs[year], info.URL)
 			}
-			slices.SortFunc(ds, func(a, b []string) bool {
-				return a[1] < b[1]
+			slices.SortFunc(ds, func(a, b []string) int {
+				if a[1] < b[1] {
+					return -1
+				}
+				if a[1] > b[1] {
+					return +1
+				}
+				return 0
 			})
 			data = append(data, ds...)
 
@@ -468,8 +501,14 @@ No CVE-IDs are found in updatable packages.
 				ds = append(ds, []string{"CWE", fmt.Sprintf("[CWE/SANS(%s) Top%s]  %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
 				sansTop25URLs[year] = append(sansTop25URLs[year], info.URL)
 			}
-			slices.SortFunc(ds, func(a, b []string) bool {
-				return a[1] < b[1]
+			slices.SortFunc(ds, func(a, b []string) int {
+				if a[1] < b[1] {
+					return -1
+				}
+				if a[1] > b[1] {
+					return +1
+				}
+				return 0
 			})
 			data = append(data, ds...)
 
@@ -497,8 +536,14 @@ No CVE-IDs are found in updatable packages.
 			for _, url := range urls {
 				ds = append(ds, []string{fmt.Sprintf("OWASP(%s) Top10", year), url})
 			}
-			slices.SortFunc(ds, func(a, b []string) bool {
-				return a[0] < b[0]
+			slices.SortFunc(ds, func(a, b []string) int {
+				if a[0] < b[0] {
+					return -1
+				}
+				if a[0] > b[0] {
+					return +1
+				}
+				return 0
 			})
 			data = append(data, ds...)
 		}
@@ -507,8 +552,14 @@ No CVE-IDs are found in updatable packages.
 		for year, urls := range cweTop25URLs {
 			ds = append(ds, []string{fmt.Sprintf("CWE(%s) Top25", year), urls[0]})
 		}
-		slices.SortFunc(ds, func(a, b []string) bool {
-			return a[0] < b[0]
+		slices.SortFunc(ds, func(a, b []string) int {
+			if a[0] < b[0] {
+				return -1
+			}
+			if a[0] > b[0] {
+				return +1
+			}
+			return 0
 		})
 		data = append(data, ds...)
 
@@ -516,14 +567,16 @@ No CVE-IDs are found in updatable packages.
 		for year, urls := range sansTop25URLs {
 			ds = append(ds, []string{fmt.Sprintf("SANS/CWE(%s) Top25", year), urls[0]})
 		}
-		slices.SortFunc(ds, func(a, b []string) bool {
-			return a[0] < b[0]
+		slices.SortFunc(ds, func(a, b []string) int {
+			if a[0] < b[0] {
+				return -1
+			}
+			if a[0] > b[0] {
+				return +1
+			}
+			return 0
 		})
 		data = append(data, ds...)
-
-		for _, alert := range vuln.AlertDict.CISA {
-			data = append(data, []string{"CISA Alert", alert.URL})
-		}
 
 		for _, alert := range vuln.AlertDict.JPCERT {
 			data = append(data, []string{"JPCERT Alert", alert.URL})
@@ -687,7 +740,7 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 
 				// TODO commented out because  a bug of diff logic when multiple oval defs found for a certain CVE-ID and same updated_at
 				// if these OVAL defs have different affected packages, this logic detects as updated.
-				// This logic will be uncomented after integration with gost https://github.com/vulsio/gost
+				// This logic will be uncommented after integration with gost https://github.com/vulsio/gost
 				// } else if isCveFixed(v, previous) {
 				// updated[v.CveID] = v
 				// logging.Log.Debugf("fixed: %s", v.CveID)
@@ -734,7 +787,7 @@ func getMinusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 }
 
 func isCveInfoUpdated(cveID string, previous, current models.ScanResult) bool {
-	cTypes := append([]models.CveContentType{models.Nvd, models.Jvn}, models.GetCveContentTypes(current.Family)...)
+	cTypes := append([]models.CveContentType{models.Mitre, models.Nvd, models.Jvn}, models.GetCveContentTypes(current.Family)...)
 
 	prevLastModifieds := map[models.CveContentType][]time.Time{}
 	preVinfo, ok := previous.ScannedCves[cveID]

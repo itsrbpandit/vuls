@@ -112,9 +112,11 @@ func (o *suse) checkScanMode() error {
 func (o *suse) checkDeps() error {
 	if o.getServerInfo().Mode.IsFast() {
 		return o.execCheckDeps(o.depsFast())
-	} else if o.getServerInfo().Mode.IsFastRoot() {
+	}
+	if o.getServerInfo().Mode.IsFastRoot() {
 		return o.execCheckDeps(o.depsFastRoot())
-	} else if o.getServerInfo().Mode.IsDeep() {
+	}
+	if o.getServerInfo().Mode.IsDeep() {
 		return o.execCheckDeps(o.depsDeep())
 	}
 	return xerrors.New("Unknown scan mode")
@@ -135,11 +137,11 @@ func (o *suse) depsDeep() []string {
 func (o *suse) checkIfSudoNoPasswd() error {
 	if o.getServerInfo().Mode.IsFast() {
 		return o.execCheckIfSudoNoPasswd(o.sudoNoPasswdCmdsFast())
-	} else if o.getServerInfo().Mode.IsFastRoot() {
-		return o.execCheckIfSudoNoPasswd(o.sudoNoPasswdCmdsFastRoot())
-	} else {
-		return o.execCheckIfSudoNoPasswd(o.sudoNoPasswdCmdsDeep())
 	}
+	if o.getServerInfo().Mode.IsFastRoot() {
+		return o.execCheckIfSudoNoPasswd(o.sudoNoPasswdCmdsFastRoot())
+	}
+	return o.execCheckIfSudoNoPasswd(o.sudoNoPasswdCmdsDeep())
 }
 
 func (o *suse) sudoNoPasswdCmdsFast() []cmd {
@@ -166,9 +168,9 @@ func (o *suse) sudoNoPasswdCmdsFastRoot() []cmd {
 	}
 }
 
-func (o *suse) scanPackages() error {
+func (o *suse) scanPackages() (err error) {
 	o.log.Infof("Scanning OS pkg in %s", o.getServerInfo().Mode)
-	installed, err := o.scanInstalledPackages()
+	o.Packages, o.SrcPackages, err = o.scanInstalledPackages()
 	if err != nil {
 		o.log.Errorf("Failed to scan installed packages: %s", err)
 		return err
@@ -183,7 +185,6 @@ func (o *suse) scanPackages() error {
 	}
 
 	if o.getServerInfo().Mode.IsOffline() {
-		o.Packages = installed
 		return nil
 	}
 
@@ -194,10 +195,8 @@ func (o *suse) scanPackages() error {
 		o.warns = append(o.warns, err)
 		// Only warning this error
 	} else {
-		installed.MergeNewVersion(updatable)
+		o.Packages.MergeNewVersion(updatable)
 	}
-
-	o.Packages = installed
 	return nil
 }
 
@@ -229,11 +228,27 @@ var warnRepoPattern = regexp.MustCompile(`Warning: Repository '.+' appears to be
 func (o *suse) parseZypperLULines(stdout string) (models.Packages, error) {
 	updatables := models.Packages{}
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	headerParsed := false
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, "S | Repository") || strings.Contains(line, "--+----------------") || warnRepoPattern.MatchString(line) {
+		if line == "" || warnRepoPattern.MatchString(line) {
 			continue
 		}
+
+		if !headerParsed {
+			if func() bool {
+				for _, c := range line {
+					if !strings.ContainsRune("-+", c) {
+						return false
+					}
+				}
+				return true
+			}() {
+				headerParsed = true
+			}
+			continue
+		}
+
 		pack, err := o.parseZypperLUOneLine(line)
 		if err != nil {
 			return nil, err
@@ -249,6 +264,9 @@ func (o *suse) parseZypperLUOneLine(line string) (*models.Package, error) {
 		return nil, xerrors.Errorf("zypper -q lu Unknown format: %s", line)
 	}
 	available := strings.Split(strings.TrimSpace(ss[4]), "-")
+	if len(available) != 2 {
+		return nil, xerrors.Errorf("unexpected Available Version. expected: %q, actual: %q", "<major>-<release>", strings.TrimSpace(ss[4]))
+	}
 	return &models.Package{
 		Name:       strings.TrimSpace(ss[2]),
 		NewVersion: available[0],

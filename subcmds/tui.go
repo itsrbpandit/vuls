@@ -1,5 +1,4 @@
 //go:build !scanner
-// +build !scanner
 
 package subcmds
 
@@ -9,14 +8,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/aquasecurity/trivy/pkg/utils"
+	"github.com/aquasecurity/trivy/pkg/cache"
+	"github.com/google/subcommands"
+
 	"github.com/future-architect/vuls/config"
 	"github.com/future-architect/vuls/detector"
 	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
 	"github.com/future-architect/vuls/reporter"
 	"github.com/future-architect/vuls/tui"
-	"github.com/google/subcommands"
 )
 
 // TuiCmd is Subcommand of host discovery mode
@@ -52,6 +52,9 @@ func (*TuiCmd) Usage() string {
 		[-no-progress]
 		[-pipe]
 		[-trivy-cachedb-dir=/path/to/dir]
+		[-trivy-db-repository="OCI-repository-for-trivy-db"]
+		[-trivy-java-db-repository="OCI-repository-for-trivy-java-db"]
+		[-trivy-skip-java-db-update]
 
 `
 }
@@ -103,7 +106,17 @@ func (p *TuiCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&config.Conf.Pipe, "pipe", false, "Use stdin via PIPE")
 
 	f.StringVar(&config.Conf.TrivyCacheDBDir, "trivy-cachedb-dir",
-		utils.DefaultCacheDir(), "/path/to/dir")
+		cache.DefaultDir(), "/path/to/dir")
+
+	config.Conf.TrivyOpts.TrivyDBRepositories = config.DefaultTrivyDBRepositories
+	dbRepos := stringArrayFlag{target: &config.Conf.TrivyOpts.TrivyDBRepositories}
+	f.Var(&dbRepos, "trivy-db-repository", "Trivy DB Repository in a comma-separated list")
+
+	config.Conf.TrivyOpts.TrivyJavaDBRepositories = config.DefaultTrivyJavaDBRepositories
+	javaDBRepos := stringArrayFlag{target: &config.Conf.TrivyOpts.TrivyJavaDBRepositories}
+	f.Var(&javaDBRepos, "trivy-java-db-repository", "Trivy Java DB Repository in a comma-separated list")
+
+	f.BoolVar(&config.Conf.TrivySkipJavaDBUpdate, "trivy-skip-java-db-update", false, "Skip Trivy Java DB Update")
 }
 
 // Execute execute

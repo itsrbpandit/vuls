@@ -192,6 +192,7 @@ func detectRedhat(c config.ServerInfo) (bool, osTypeInterface) {
 		// $ cat /etc/amazon-linux-release
 		// Amazon Linux release 2022 (Amazon Linux)
 		// Amazon Linux release 2023 (Amazon Linux)
+		// Amazon Linux release 2023.3.20240312 (Amazon Linux)
 		if r := exec(c, "cat /etc/amazon-linux-release", noSudo); r.isSuccess() {
 			amazon := newAmazon(c)
 			result := releasePattern.FindStringSubmatch(strings.TrimSpace(r.Stdout))
@@ -311,6 +312,7 @@ func detectRedhat(c config.ServerInfo) (bool, osTypeInterface) {
 			case strings.HasPrefix(r.Stdout, "Amazon Linux 2023"), strings.HasPrefix(r.Stdout, "Amazon Linux release 2023"):
 				// Amazon Linux 2023 (Amazon Linux)
 				// Amazon Linux release 2023 (Amazon Linux)
+				// Amazon Linux release 2023.3.20240312 (Amazon Linux)
 				release = "2023"
 			case strings.HasPrefix(r.Stdout, "Amazon Linux 2"), strings.HasPrefix(r.Stdout, "Amazon Linux release 2"):
 				// Amazon Linux 2 (Karoo)
@@ -369,9 +371,8 @@ func (o *redhatBase) execCheckDeps(packNames []string) error {
 	for _, name := range packNames {
 		cmd := "rpm -q " + name
 		if r := o.exec(cmd, noSudo); !r.isSuccess() {
-			msg := fmt.Sprintf("%s is not installed", name)
-			o.log.Errorf(msg)
-			return xerrors.New(msg)
+			o.log.Errorf("%s is not installed", name)
+			return xerrors.Errorf("%s is not installed", name)
 		}
 	}
 	o.log.Infof("Dependencies ... Pass")
@@ -415,13 +416,9 @@ func (o *redhatBase) detectIPAddr() (err error) {
 
 func (o *redhatBase) scanPackages() (err error) {
 	o.log.Infof("Scanning OS pkg in %s", o.getServerInfo().Mode)
-	o.Packages, err = o.scanInstalledPackages()
+	o.Packages, o.SrcPackages, err = o.scanInstalledPackages()
 	if err != nil {
 		return xerrors.Errorf("Failed to scan installed packages: %w", err)
-	}
-
-	if o.EnabledDnfModules, err = o.detectEnabledDnfModules(); err != nil {
-		return xerrors.Errorf("Failed to detect installed dnf modules: %w", err)
 	}
 
 	fn := func(pkgName string) execResult { return o.exec(fmt.Sprintf("rpm -q --last %s", pkgName), noSudo) }
@@ -433,12 +430,8 @@ func (o *redhatBase) scanPackages() (err error) {
 		// Only warning this error
 	}
 
-	if o.getServerInfo().Mode.IsOffline() {
+	if o.getServerInfo().Mode.IsOffline() || (o.Distro.Family == constant.RedHat && o.getServerInfo().Mode.IsFast()) {
 		return nil
-	} else if o.Distro.Family == constant.RedHat {
-		if o.getServerInfo().Mode.IsFast() {
-			return nil
-		}
 	}
 
 	updatable, err := o.scanUpdatablePackages()
@@ -472,10 +465,10 @@ func (o *redhatBase) rebootRequired(fn func(s string) execResult) (bool, error) 
 	return running != lastInstalledKernelVer, nil
 }
 
-func (o *redhatBase) scanInstalledPackages() (models.Packages, error) {
+func (o *redhatBase) scanInstalledPackages() (models.Packages, models.SrcPackages, error) {
 	release, version, err := o.runningKernel()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	o.Kernel = models.Kernel{
 		Release: release,
@@ -488,7 +481,7 @@ func (o *redhatBase) scanInstalledPackages() (models.Packages, error) {
 		switch strings.Fields(o.getDistro().Release)[0] {
 		case "2":
 			if o.exec("rpm -q yum-utils", noSudo).isSuccess() {
-				r = o.exec("repoquery --all --pkgnarrow=installed --qf='%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH} %{UI_FROM_REPO}'", o.sudo.repoquery())
+				r = o.exec("repoquery --all --pkgnarrow=installed --qf='%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM} %{UI_FROM_REPO}'", o.sudo.repoquery())
 			} else {
 				r = o.exec(o.rpmQa(), noSudo)
 			}
@@ -499,20 +492,22 @@ func (o *redhatBase) scanInstalledPackages() (models.Packages, error) {
 		r = o.exec(o.rpmQa(), noSudo)
 	}
 	if !r.isSuccess() {
-		return nil, xerrors.Errorf("Scan packages failed: %s", r)
+		return nil, nil, xerrors.Errorf("Scan packages failed: %s", r)
 	}
-	installed, _, err := o.parseInstalledPackages(r.Stdout)
+	bins, srcs, err := o.parseInstalledPackages(r.Stdout)
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to parse installed packages. err: %w", err)
+		return nil, nil, xerrors.Errorf("Failed to parse installed packages. err: %w", err)
 	}
-	return installed, nil
+	return bins, srcs, nil
 }
 
 func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, models.SrcPackages, error) {
-	installed := models.Packages{}
+	bins := make(models.Packages)
+	srcs := make(models.SrcPackages)
 	latestKernelRelease := ver.NewVersion("")
 
 	// openssl 0 1.0.1e	30.el6.11 x86_64
+	// community-mysql-common 0 8.0.26 1.module_f35+12627+b26747dd x86_64 mysql:8.0:3520210817160118:f27b74a8
 	lines := strings.Split(stdout, "\n")
 	for _, line := range lines {
 		if trimmed := strings.TrimSpace(line); trimmed == "" {
@@ -520,26 +515,27 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
 		}
 
 		var (
-			pack *models.Package
-			err  error
+			binpkg *models.Package
+			srcpkg *models.SrcPackage
+			err    error
 		)
 		switch o.getDistro().Family {
 		case constant.Amazon:
 			switch strings.Fields(o.getDistro().Release)[0] {
 			case "2":
-				switch len(strings.Fields(line)) {
-				case 5:
-					pack, err = o.parseInstalledPackagesLine(line)
+				switch len(strings.Split(line, " ")) {
 				case 6:
-					pack, err = o.parseInstalledPackagesLineFromRepoquery(line)
+					binpkg, srcpkg, err = o.parseInstalledPackagesLine(line)
+				case 7:
+					binpkg, srcpkg, err = o.parseInstalledPackagesLineFromRepoquery(line)
 				default:
 					return nil, nil, xerrors.Errorf("Failed to parse package line: %s", line)
 				}
 			default:
-				pack, err = o.parseInstalledPackagesLine(line)
+				binpkg, srcpkg, err = o.parseInstalledPackagesLine(line)
 			}
 		default:
-			pack, err = o.parseInstalledPackagesLine(line)
+			binpkg, srcpkg, err = o.parseInstalledPackagesLine(line)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -548,77 +544,204 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
 		// `Kernel` and `kernel-devel` package may be installed multiple versions.
 		// From the viewpoint of vulnerability detection,
 		// pay attention only to the running kernel
-		isKernel, running := isRunningKernel(*pack, o.Distro.Family, o.Kernel)
+		isKernel, running := isRunningKernel(*binpkg, o.Distro.Family, o.Distro.Release, o.Kernel)
 		if isKernel {
 			if o.Kernel.Release == "" {
 				// When the running kernel release is unknown,
 				// use the latest release among the installed release
-				kernelRelease := ver.NewVersion(fmt.Sprintf("%s-%s", pack.Version, pack.Release))
+				kernelRelease := ver.NewVersion(fmt.Sprintf("%s-%s", binpkg.Version, binpkg.Release))
 				if kernelRelease.LessThan(latestKernelRelease) {
 					continue
 				}
 				latestKernelRelease = kernelRelease
 			} else if !running {
-				o.log.Debugf("Not a running kernel. pack: %#v, kernel: %#v", pack, o.Kernel)
+				o.log.Debugf("Not a running kernel. pack: %#v, kernel: %#v", binpkg, o.Kernel)
 				continue
 			} else {
-				o.log.Debugf("Found a running kernel. pack: %#v, kernel: %#v", pack, o.Kernel)
+				o.log.Debugf("Found a running kernel. pack: %#v, kernel: %#v", binpkg, o.Kernel)
 			}
 		}
-		installed[pack.Name] = *pack
+		bins[binpkg.Name] = *binpkg
+		if srcpkg != nil {
+			if p, ok := srcs[srcpkg.Name]; ok {
+				for _, bn := range p.BinaryNames {
+					srcpkg.AddBinaryName(bn)
+				}
+			}
+			srcs[srcpkg.Name] = *srcpkg
+		}
 	}
-	return installed, nil, nil
+	return bins, srcs, nil
 }
 
-func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, error) {
-	fields := strings.Fields(line)
-	if len(fields) != 5 {
-		return nil,
-			xerrors.Errorf("Failed to parse package line: %s", line)
-	}
+func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *models.SrcPackage, error) {
+	switch fields := strings.Split(line, " "); len(fields) {
+	case 6, 7:
+		sp, err := func() (*models.SrcPackage, error) {
+			switch fields[5] {
+			case "(none)":
+				return nil, nil
+			default:
+				n, v, r, _, _, err := splitFileName(fields[5])
+				if err != nil {
+					o.warns = append(o.warns, xerrors.Errorf("Failed to parse source rpm file. err: %w", err))
+					return nil, nil
+				}
+				return &models.SrcPackage{
+					Name: n,
+					Version: func() string {
+						switch fields[1] {
+						case "0", "(none)":
+							if r == "" {
+								return v
+							}
+							return fmt.Sprintf("%s-%s", v, r)
+						default:
+							if r == "" {
+								return fmt.Sprintf("%s:%s", fields[1], v)
+							}
+							return fmt.Sprintf("%s:%s-%s", fields[1], v, r)
+						}
+					}(),
+					Arch:        "src",
+					BinaryNames: []string{fields[0]},
+				}, nil
+			}
+		}()
+		if err != nil {
+			return nil, nil, xerrors.Errorf("Failed to parse sourcepkg. err: %w", err)
+		}
 
-	ver := ""
-	epoch := fields[1]
-	if epoch == "0" || epoch == "(none)" {
-		ver = fields[2]
-	} else {
-		ver = fmt.Sprintf("%s:%s", epoch, fields[2])
+		return &models.Package{
+			Name: fields[0],
+			Version: func() string {
+				switch fields[1] {
+				case "0", "(none)":
+					return fields[2]
+				default:
+					return fmt.Sprintf("%s:%s", fields[1], fields[2])
+				}
+			}(),
+			Release: fields[3],
+			Arch:    fields[4],
+			ModularityLabel: func() string {
+				if len(fields) == 7 && fields[6] != "(none)" {
+					return fields[6]
+				}
+				return ""
+			}(),
+		}, sp, nil
+	default:
+		return nil, nil, xerrors.Errorf("Failed to parse package line: %s", line)
 	}
-
-	return &models.Package{
-		Name:    fields[0],
-		Version: ver,
-		Release: fields[3],
-		Arch:    fields[4],
-	}, nil
 }
 
-func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*models.Package, error) {
-	fields := strings.Fields(line)
-	if len(fields) != 6 {
-		return nil, xerrors.Errorf("Failed to parse package line: %s", line)
+func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*models.Package, *models.SrcPackage, error) {
+	switch fields := strings.Split(line, " "); len(fields) {
+	case 7:
+		sp, err := func() (*models.SrcPackage, error) {
+			switch fields[5] {
+			case "(none)":
+				return nil, nil
+			default:
+				n, v, r, _, _, err := splitFileName(fields[5])
+				if err != nil {
+					o.warns = append(o.warns, xerrors.Errorf("Failed to parse source rpm file. err: %w", err))
+					return nil, nil
+				}
+				return &models.SrcPackage{
+					Name: n,
+					Version: func() string {
+						switch fields[1] {
+						case "0", "(none)":
+							if r == "" {
+								return v
+							}
+							return fmt.Sprintf("%s-%s", v, r)
+						default:
+							if r == "" {
+								return fmt.Sprintf("%s:%s", fields[1], v)
+							}
+							return fmt.Sprintf("%s:%s-%s", fields[1], v, r)
+						}
+					}(),
+					Arch:        "src",
+					BinaryNames: []string{fields[0]},
+				}, nil
+			}
+		}()
+		if err != nil {
+			return nil, nil, xerrors.Errorf("Failed to parse sourcepkg. err: %w", err)
+		}
+
+		return &models.Package{
+			Name: fields[0],
+			Version: func() string {
+				switch fields[1] {
+				case "0", "(none)":
+					return fields[2]
+				default:
+					return fmt.Sprintf("%s:%s", fields[1], fields[2])
+				}
+			}(),
+			Release: fields[3],
+			Arch:    fields[4],
+			Repository: func() string {
+				switch repo := strings.TrimPrefix(fields[6], "@"); repo {
+				case "installed":
+					return "amzn2-core"
+				default:
+					return repo
+				}
+			}(),
+		}, sp, nil
+	default:
+		return nil, nil, xerrors.Errorf("Failed to parse package line: %s", line)
+	}
+}
+
+// splitFileName returns a name, version, release, epoch, arch:
+//
+//	e.g.
+//		foo-1.0-1.i386.rpm => foo, 1.0, 1, i386
+//		1:bar-9-123a.ia64.rpm => bar, 9, 123a, 1, ia64
+//
+// https://github.com/rpm-software-management/yum/blob/043e869b08126c1b24e392f809c9f6871344c60d/rpmUtils/miscutils.py#L301
+func splitFileName(filename string) (name, ver, rel, epoch, arch string, err error) {
+	basename := strings.TrimSuffix(filename, ".rpm")
+
+	archIndex := strings.LastIndex(basename, ".")
+	// support not standard style rpm fullname
+	// e.g.
+	//   baz-0-1-i386 => i386
+	//   qux-0--i386 => i386
+	if i := strings.LastIndex(basename[archIndex+1:], "-"); i > -1 {
+		archIndex = archIndex + (i + 1)
+	}
+	if archIndex == -1 {
+		return "", "", "", "", "", xerrors.Errorf("unexpected file name. expected: %q, actual: %q", "(<epoch>:)<name>-<version>-(<release>)(.|-)<arch>.rpm", filename)
+	}
+	arch = basename[archIndex+1:]
+
+	relIndex := strings.LastIndex(basename[:archIndex], "-")
+	if relIndex == -1 {
+		return "", "", "", "", "", xerrors.Errorf("unexpected file name. expected: %q, actual: %q", "(<epoch>:)<name>-<version>-(<release>)(.|-)<arch>.rpm", filename)
+	}
+	rel = basename[relIndex+1 : archIndex]
+
+	verIndex := strings.LastIndex(basename[:relIndex], "-")
+	if verIndex == -1 {
+		return "", "", "", "", "", xerrors.Errorf("unexpected file name. expected: %q, actual: %q", "(<epoch>:)<name>-<version>-(<release>)(.|-)<arch>.rpm", filename)
+	}
+	ver = basename[verIndex+1 : relIndex]
+
+	epochIndex := strings.Index(basename, ":")
+	if epochIndex != -1 {
+		epoch = basename[:epochIndex]
 	}
 
-	ver := ""
-	epoch := fields[1]
-	if epoch == "0" || epoch == "(none)" {
-		ver = fields[2]
-	} else {
-		ver = fmt.Sprintf("%s:%s", epoch, fields[2])
-	}
-
-	repo := strings.TrimPrefix(fields[5], "@")
-	if repo == "installed" {
-		repo = "amzn2-core"
-	}
-
-	return &models.Package{
-		Name:       fields[0],
-		Version:    ver,
-		Release:    fields[3],
-		Arch:       fields[4],
-		Repository: repo,
-	}, nil
+	name = basename[epochIndex+1 : verIndex]
+	return name, ver, rel, epoch, arch, nil
 }
 
 func (o *redhatBase) parseRpmQfLine(line string) (pkg *models.Package, ignored bool, err error) {
@@ -631,7 +754,7 @@ func (o *redhatBase) parseRpmQfLine(line string) (pkg *models.Package, ignored b
 			return nil, true, nil
 		}
 	}
-	pkg, err = o.parseInstalledPackagesLine(line)
+	pkg, _, err = o.parseInstalledPackagesLine(line)
 	return pkg, false, err
 }
 
@@ -645,10 +768,6 @@ func (o *redhatBase) yumMakeCache() error {
 }
 
 func (o *redhatBase) scanUpdatablePackages() (models.Packages, error) {
-	if err := o.yumMakeCache(); err != nil {
-		return nil, xerrors.Errorf("Failed to `yum makecache`: %w", err)
-	}
-
 	isDnf := o.exec(util.PrependProxyEnv(`repoquery --version | grep dnf`), o.sudo.repoquery()).isSuccess()
 	cmd := `repoquery --all --pkgnarrow=updates --qf='%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{REPO}'`
 	if isDnf {
@@ -687,7 +806,7 @@ func (o *redhatBase) parseUpdatablePacksLines(stdout string) (models.Packages, e
 }
 
 func (o *redhatBase) parseUpdatablePacksLine(line string) (models.Package, error) {
-	fields := strings.Fields(line)
+	fields := strings.Split(line, " ")
 	if len(fields) < 5 {
 		return models.Package{}, xerrors.Errorf("Unknown format: %s, fields: %s", line, fields)
 	}
@@ -815,7 +934,7 @@ func (o *redhatBase) parseNeedsRestarting(stdout string) (procs []models.NeedRes
 		}
 
 		path := ss[1]
-		if !strings.HasPrefix(path, "/") {
+		if path != "" && !strings.HasPrefix(path, "/") {
 			path = strings.Fields(path)[0]
 			// [ec2-user@ip-172-31-11-139 ~]$ sudo needs-restarting
 			// 2024 : auditd
@@ -882,8 +1001,9 @@ func (o *redhatBase) getOwnerPkgs(paths []string) (names []string, _ error) {
 }
 
 func (o *redhatBase) rpmQa() string {
-	const old = `rpm -qa --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH}\n"`
-	const newer = `rpm -qa --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n"`
+	const old = `rpm -qa --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM}\n"`
+	const newer = `rpm -qa --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM}\n"`
+	const modularity = `rpm -qa --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM} %{MODULARITYLABEL}\n"`
 	switch o.Distro.Family {
 	case constant.OpenSUSE:
 		if o.Distro.Release == "tumbleweed" {
@@ -897,17 +1017,34 @@ func (o *redhatBase) rpmQa() string {
 			return old
 		}
 		return newer
+	case constant.Fedora:
+		if v, _ := o.Distro.MajorVersion(); v < 30 {
+			return newer
+		}
+		return modularity
+	case constant.Amazon:
+		switch v, _ := o.Distro.MajorVersion(); v {
+		case 1, 2:
+			return newer
+		default:
+			return modularity
+		}
 	default:
-		if v, _ := o.Distro.MajorVersion(); v < 6 {
+		v, _ := o.Distro.MajorVersion()
+		if v < 6 {
 			return old
+		}
+		if v >= 8 {
+			return modularity
 		}
 		return newer
 	}
 }
 
 func (o *redhatBase) rpmQf() string {
-	const old = `rpm -qf --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH}\n" `
-	const newer = `rpm -qf --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n" `
+	const old = `rpm -qf --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM}\n" `
+	const newer = `rpm -qf --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM}\n"`
+	const modularity = `rpm -qf --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH} %{SOURCERPM} %{MODULARITYLABEL}\n"`
 	switch o.Distro.Family {
 	case constant.OpenSUSE:
 		if o.Distro.Release == "tumbleweed" {
@@ -921,48 +1058,26 @@ func (o *redhatBase) rpmQf() string {
 			return old
 		}
 		return newer
+	case constant.Fedora:
+		if v, _ := o.Distro.MajorVersion(); v < 30 {
+			return newer
+		}
+		return modularity
+	case constant.Amazon:
+		switch v, _ := o.Distro.MajorVersion(); v {
+		case 1, 2:
+			return newer
+		default:
+			return modularity
+		}
 	default:
-		if v, _ := o.Distro.MajorVersion(); v < 6 {
+		v, _ := o.Distro.MajorVersion()
+		if v < 6 {
 			return old
+		}
+		if v >= 8 {
+			return modularity
 		}
 		return newer
 	}
-}
-
-func (o *redhatBase) detectEnabledDnfModules() ([]string, error) {
-	switch o.Distro.Family {
-	case constant.RedHat, constant.CentOS, constant.Alma, constant.Rocky, constant.Fedora:
-		//TODO OracleLinux
-	default:
-		return nil, nil
-	}
-	if v, _ := o.Distro.MajorVersion(); v < 8 {
-		return nil, nil
-	}
-
-	cmd := `dnf --nogpgcheck --cacheonly --color=never --quiet module list --enabled`
-	r := o.exec(util.PrependProxyEnv(cmd), noSudo)
-	if !r.isSuccess() {
-		if strings.Contains(r.Stdout, "Cache-only enabled but no cache") {
-			return nil, xerrors.Errorf("sudo yum check-update to make local cache before scanning: %s", r)
-		}
-		return nil, xerrors.Errorf("Failed to dnf module list: %s", r)
-	}
-	return o.parseDnfModuleList(r.Stdout)
-}
-
-func (o *redhatBase) parseDnfModuleList(stdout string) (labels []string, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(stdout))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "Hint:") || !strings.Contains(line, "[i]") {
-			continue
-		}
-		ss := strings.Fields(line)
-		if len(ss) < 2 {
-			continue
-		}
-		labels = append(labels, fmt.Sprintf("%s:%s", ss[0], ss[1]))
-	}
-	return
 }

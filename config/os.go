@@ -40,7 +40,7 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 	switch family {
 	case constant.Amazon:
 		eol, found = map[string]EOL{
-			"1":    {StandardSupportUntil: time.Date(2023, 6, 30, 23, 59, 59, 0, time.UTC)},
+			"1":    {StandardSupportUntil: time.Date(2023, 12, 31, 23, 59, 59, 0, time.UTC)},
 			"2":    {StandardSupportUntil: time.Date(2025, 6, 30, 23, 59, 59, 0, time.UTC)},
 			"2022": {StandardSupportUntil: time.Date(2026, 6, 30, 23, 59, 59, 0, time.UTC)},
 			"2023": {StandardSupportUntil: time.Date(2027, 6, 30, 23, 59, 59, 0, time.UTC)},
@@ -194,7 +194,16 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 				StandardSupportUntil: time.Date(2023, 7, 20, 23, 59, 59, 0, time.UTC),
 			},
 			"23.04": {
-				StandardSupportUntil: time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC),
+				StandardSupportUntil: time.Date(2024, 1, 25, 23, 59, 59, 0, time.UTC),
+			},
+			"23.10": {
+				StandardSupportUntil: time.Date(2024, 7, 11, 23, 59, 59, 0, time.UTC),
+			},
+			"24.04": {
+				StandardSupportUntil: time.Date(2029, 6, 30, 23, 59, 59, 0, time.UTC),
+			},
+			"24.10": {
+				StandardSupportUntil: time.Date(2025, 7, 31, 23, 59, 59, 0, time.UTC),
 			},
 		}[release]
 	case constant.OpenSUSE:
@@ -223,9 +232,10 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 			"15.0": {Ended: true},
 			"15.1": {Ended: true},
 			"15.2": {Ended: true},
-			"15.3": {StandardSupportUntil: time.Date(2022, 11, 30, 23, 59, 59, 0, time.UTC)},
-			"15.4": {StandardSupportUntil: time.Date(2023, 11, 30, 23, 59, 59, 0, time.UTC)},
+			"15.3": {StandardSupportUntil: time.Date(2022, 12, 31, 23, 59, 59, 0, time.UTC)},
+			"15.4": {StandardSupportUntil: time.Date(2023, 12, 31, 23, 59, 59, 0, time.UTC)},
 			"15.5": {StandardSupportUntil: time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)},
+			"15.6": {StandardSupportUntil: time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC)},
 		}[release]
 	case constant.SUSEEnterpriseServer:
 		// https://www.suse.com/lifecycle
@@ -303,6 +313,9 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 			"3.16": {StandardSupportUntil: time.Date(2024, 5, 23, 23, 59, 59, 0, time.UTC)},
 			"3.17": {StandardSupportUntil: time.Date(2024, 11, 22, 23, 59, 59, 0, time.UTC)},
 			"3.18": {StandardSupportUntil: time.Date(2025, 5, 9, 23, 59, 59, 0, time.UTC)},
+			"3.19": {StandardSupportUntil: time.Date(2025, 11, 1, 23, 59, 59, 0, time.UTC)},
+			"3.20": {StandardSupportUntil: time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC)},
+			"3.21": {StandardSupportUntil: time.Date(2026, 11, 1, 23, 59, 59, 0, time.UTC)},
 		}[majorDotMinor(release)]
 	case constant.FreeBSD:
 		// https://www.freebsd.org/security/
@@ -313,7 +326,8 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 			"10": {Ended: true},
 			"11": {StandardSupportUntil: time.Date(2021, 9, 30, 23, 59, 59, 0, time.UTC)},
 			"12": {StandardSupportUntil: time.Date(2023, 12, 31, 23, 59, 59, 0, time.UTC)},
-			"13": {StandardSupportUntil: time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)},
+			"13": {StandardSupportUntil: time.Date(2026, 4, 30, 23, 59, 59, 0, time.UTC)},
+			"14": {StandardSupportUntil: time.Date(2028, 11, 30, 23, 59, 59, 0, time.UTC)},
 		}[major(release)]
 	case constant.Fedora:
 		// https://docs.fedoraproject.org/en-US/releases/eol/
@@ -324,8 +338,11 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 			"34": {StandardSupportUntil: time.Date(2022, 6, 6, 23, 59, 59, 0, time.UTC)},
 			"35": {StandardSupportUntil: time.Date(2022, 12, 12, 23, 59, 59, 0, time.UTC)},
 			"36": {StandardSupportUntil: time.Date(2023, 5, 16, 23, 59, 59, 0, time.UTC)},
-			"37": {StandardSupportUntil: time.Date(2023, 12, 15, 23, 59, 59, 0, time.UTC)},
-			"38": {StandardSupportUntil: time.Date(2024, 5, 14, 23, 59, 59, 0, time.UTC)},
+			"37": {StandardSupportUntil: time.Date(2023, 12, 5, 23, 59, 59, 0, time.UTC)},
+			"38": {StandardSupportUntil: time.Date(2024, 5, 21, 23, 59, 59, 0, time.UTC)},
+			"39": {StandardSupportUntil: time.Date(2024, 11, 26, 23, 59, 59, 0, time.UTC)},
+			"40": {StandardSupportUntil: time.Date(2025, 5, 28, 23, 59, 59, 0, time.UTC)},
+			"41": {StandardSupportUntil: time.Date(2025, 11, 19, 23, 59, 59, 0, time.UTC)},
 		}[major(release)]
 	case constant.Windows:
 		// https://learn.microsoft.com/ja-jp/lifecycle/products/?products=windows
@@ -366,13 +383,17 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 		case "Windows 10 Version 21H1":
 			eol, found = EOL{StandardSupportUntil: time.Date(2022, 12, 13, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows 10 Version 21H2":
-			eol, found = EOL{StandardSupportUntil: time.Date(2023, 6, 13, 23, 59, 59, 0, time.UTC)}, true
+			eol, found = EOL{StandardSupportUntil: time.Date(2024, 6, 11, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows 10 Version 22H2":
-			eol, found = EOL{StandardSupportUntil: time.Date(2024, 5, 14, 23, 59, 59, 0, time.UTC)}, true
+			eol, found = EOL{StandardSupportUntil: time.Date(2025, 10, 14, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows 11 Version 21H2":
 			eol, found = EOL{StandardSupportUntil: time.Date(2024, 10, 8, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows 11 Version 22H2":
 			eol, found = EOL{StandardSupportUntil: time.Date(2025, 10, 14, 23, 59, 59, 0, time.UTC)}, true
+		case "Windows 11 Version 23H2":
+			eol, found = EOL{StandardSupportUntil: time.Date(2026, 11, 10, 23, 59, 59, 0, time.UTC)}, true
+		case "Windows 11 Version 24H2":
+			eol, found = EOL{StandardSupportUntil: time.Date(2027, 10, 12, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows Server 2008":
 			eol, found = EOL{StandardSupportUntil: time.Date(2011, 7, 12, 23, 59, 59, 0, time.UTC)}, true
 			if strings.Contains(rhs, "Service Pack 2") {
@@ -407,6 +428,10 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 			eol, found = EOL{StandardSupportUntil: time.Date(2022, 8, 9, 23, 59, 59, 0, time.UTC)}, true
 		case "Windows Server 2022":
 			eol, found = EOL{StandardSupportUntil: time.Date(2031, 10, 14, 23, 59, 59, 0, time.UTC)}, true
+		case "Windows Server 2022, 23H2 Edition":
+			eol, found = EOL{}, true
+		case "Windows Server 2025":
+			eol, found = EOL{StandardSupportUntil: time.Date(2034, 10, 10, 23, 59, 59, 0, time.UTC)}, true
 		default:
 		}
 	case constant.MacOSX, constant.MacOSXServer:
@@ -430,10 +455,11 @@ func GetEOL(family, release string) (eol EOL, found bool) {
 		}[majorDotMinor(release)]
 	case constant.MacOS, constant.MacOSServer:
 		eol, found = map[string]EOL{
-			"11": {},
+			"11": {Ended: true},
 			"12": {},
 			"13": {},
 			"14": {},
+			"15": {},
 		}[major(release)]
 	}
 	return
@@ -452,7 +478,7 @@ func majorDotMinor(osVer string) (majorDotMinor string) {
 }
 
 func getAmazonLinuxVersion(osRelease string) string {
-	switch s := strings.Fields(osRelease)[0]; s {
+	switch s := strings.Fields(osRelease)[0]; major(s) {
 	case "1":
 		return "1"
 	case "2":

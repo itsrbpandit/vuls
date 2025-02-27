@@ -7,15 +7,17 @@ import (
 
 // SMTPConf is smtp config
 type SMTPConf struct {
-	SMTPAddr      string   `toml:"smtpAddr,omitempty" json:"-"`
-	SMTPPort      string   `toml:"smtpPort,omitempty" valid:"port" json:"-"`
-	User          string   `toml:"user,omitempty" json:"-"`
-	Password      string   `toml:"password,omitempty" json:"-"`
-	From          string   `toml:"from,omitempty" json:"-"`
-	To            []string `toml:"to,omitempty" json:"-"`
-	Cc            []string `toml:"cc,omitempty" json:"-"`
-	SubjectPrefix string   `toml:"subjectPrefix,omitempty" json:"-"`
-	Enabled       bool     `toml:"-" json:"-"`
+	SMTPAddr              string   `toml:"smtpAddr,omitempty" json:"-"`
+	SMTPPort              string   `toml:"smtpPort,omitempty" valid:"port" json:"-"`
+	TLSMode               string   `toml:"tlsMode,omitempty" json:"-"`
+	TLSInsecureSkipVerify bool     `toml:"tlsInsecureSkipVerify,omitempty" json:"-"`
+	User                  string   `toml:"user,omitempty" json:"-"`
+	Password              string   `toml:"password,omitempty" json:"-"`
+	From                  string   `toml:"from,omitempty" json:"-"`
+	To                    []string `toml:"to,omitempty" json:"-"`
+	Cc                    []string `toml:"cc,omitempty" json:"-"`
+	SubjectPrefix         string   `toml:"subjectPrefix,omitempty" json:"-"`
+	Enabled               bool     `toml:"-" json:"-"`
 }
 
 func checkEmails(emails []string) (errs []error) {
@@ -49,6 +51,11 @@ func (c *SMTPConf) Validate() (errs []error) {
 	}
 	if c.SMTPPort == "" {
 		errs = append(errs, xerrors.New("email.smtpPort must not be empty"))
+	}
+	switch c.TLSMode {
+	case "", "None", "STARTTLS", "SMTPS":
+	default:
+		errs = append(errs, xerrors.New(`email.tlsMode accepts ["", "None", "STARTTLS", "SMTPS"]`))
 	}
 	if len(c.To) == 0 {
 		errs = append(errs, xerrors.New("email.To required at least one address"))

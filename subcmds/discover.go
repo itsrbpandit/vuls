@@ -43,7 +43,7 @@ func (p *DiscoverCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	logging.Log.Infof("vuls-%s-%s", config.Version, config.Revision)
 	// validate
 	if len(f.Args()) == 0 {
-		logging.Log.Errorf("Usage: " + p.Usage())
+		logging.Log.Errorf("Usage: %s", p.Usage())
 		return subcommands.ExitUsageError
 	}
 
@@ -113,6 +113,11 @@ func printConfigToml(ips []string) (err error) {
 #sqlite3Path = "/path/to/go-cti.sqlite3"
 #url        = ""
 
+[vuls2]
+#Path = "/path/to/vuls.db"
+#Repository = "ghcr.io/vulsio/vuls-nightly-db:<schema-version>"
+#SkipUpdate = false
+
 # https://vuls.io/docs/en/config.toml.html#slack-section
 #[slack]
 #hookURL      = "https://hooks.slack.com/services/abc123/defghijklmnopqrstuvwxyz"
@@ -125,14 +130,16 @@ func printConfigToml(ips []string) (err error) {
 
 # https://vuls.io/docs/en/config.toml.html#email-section
 #[email]
-#smtpAddr      = "smtp.example.com"
-#smtpPort      = "587"
-#user          = "username"
-#password      = "password"
-#from          = "from@example.com"
-#to            = ["to@example.com"]
-#cc            = ["cc@example.com"]
-#subjectPrefix = "[vuls]"
+#smtpAddr              = "smtp.example.com"
+#smtpPort              = "587"
+#tlsMode               = "STARTTLS"
+#tlsInsecureSkipVerify = false
+#user                  = "username"
+#password              = "password"
+#from                  = "from@example.com"
+#to                    = ["to@example.com"]
+#cc                    = ["cc@example.com"]
+#subjectPrefix         = "[vuls]"
 
 # https://vuls.io/docs/en/config.toml.html#http-section
 #[http]
@@ -150,14 +157,18 @@ func printConfigToml(ips []string) (err error) {
 
 # https://vuls.io/docs/en/usage-report.html#example-put-results-in-s3-bucket
 #[aws]
-#profile                = "default"
+#s3Endpoint             = "http://localhost:9000"
 #region                 = "ap-northeast-1"
+#profile                = "default"
+#credentialProvider     = "anonymous"
 #s3Bucket               = "vuls"
 #s3ResultsDir           = "/path/to/result"
 #s3ServerSideEncryption = "AES256"
+#s3UsePathStyle         = false
 
-# https://vuls.io/docs/en/usage-report.html#example-put-results-in-azure-blob-storage<Paste>
+# https://vuls.io/docs/en/usage-report.html#example-put-results-in-azure-blob-storage
 #[azure]
+#endpoint      = "https://default.blob.core.windows.net/"
 #accountName   = "default"
 #accountKey    = "xxxxxxxxxxxxxx"
 #containerName = "vuls"

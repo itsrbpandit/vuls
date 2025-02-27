@@ -1,16 +1,16 @@
 //go:build !scanner
-// +build !scanner
 
 package gost
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff"
 	"github.com/parnurzeal/gorequest"
-	"golang.org/x/exp/maps"
 	"golang.org/x/xerrors"
 
 	"github.com/future-architect/vuls/logging"
@@ -86,7 +86,7 @@ type request struct {
 }
 
 func getCvesWithFixStateViaHTTP(r *models.ScanResult, urlPrefix, fixState string) (responses []response, err error) {
-	nReq := len(r.Packages) + len(r.SrcPackages)
+	nReq := len(r.SrcPackages)
 	reqChan := make(chan request, nReq)
 	resChan := make(chan response, nReq)
 	errChan := make(chan error, nReq)
@@ -95,15 +95,13 @@ func getCvesWithFixStateViaHTTP(r *models.ScanResult, urlPrefix, fixState string
 	defer close(errChan)
 
 	go func() {
-		for _, pack := range r.Packages {
-			reqChan <- request{
-				packName:  pack.Name,
-				isSrcPack: false,
-			}
-		}
 		for _, pack := range r.SrcPackages {
+			n := pack.Name
+			if models.IsKernelSourcePackage(r.Family, pack.Name) {
+				n = models.RenameKernelSourcePackageName(r.Family, pack.Name)
+			}
 			reqChan <- request{
-				packName:  pack.Name,
+				packName:  n,
 				isSrcPack: true,
 			}
 		}
@@ -193,5 +191,5 @@ func unique[T comparable](s []T) []T {
 	for _, v := range s {
 		m[v] = struct{}{}
 	}
-	return maps.Keys(m)
+	return slices.Collect(maps.Keys(m))
 }

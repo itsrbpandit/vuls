@@ -698,6 +698,26 @@ func TestCvss3Scores(t *testing.T) {
 				},
 			},
 		},
+		// [2] Multiple Severities in Debian Security Tracker
+		{
+			in: VulnInfo{
+				CveContents: CveContents{
+					DebianSecurityTracker: []CveContent{{
+						Type:          DebianSecurityTracker,
+						Cvss3Severity: "not yet assigned|low",
+					}},
+				},
+			},
+			out: []CveContentCvss{{
+				Type: DebianSecurityTracker,
+				Value: Cvss{
+					Type:                 CVSS3,
+					Score:                3.9,
+					CalculatedBySeverity: true,
+					Severity:             "NOT YET ASSIGNED|LOW",
+				},
+			}},
+		},
 		// Empty
 		{
 			in:  VulnInfo{},
@@ -894,6 +914,50 @@ func TestMaxCvssScores(t *testing.T) {
 					Score:                8.9,
 					Severity:             "HIGH",
 					CalculatedBySeverity: true,
+				},
+			},
+		},
+		// 6 : CVSSv4.0 and CVSSv3.1
+		{
+			in: VulnInfo{
+				CveContents: CveContents{
+					Mitre: []CveContent{
+						{
+							Type:           Mitre,
+							Cvss40Score:    6.9,
+							Cvss40Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
+							Cvss40Severity: "MEDIUM",
+							Cvss3Score:     7.3,
+							Cvss3Vector:    "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L",
+							Cvss3Severity:  "HIGH",
+							Optional:       map[string]string{"source": "CNA"},
+						},
+					},
+					Nvd: []CveContent{
+						{
+							Type:          Nvd,
+							Cvss3Score:    9.8,
+							Cvss3Vector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+							Cvss3Severity: "CRITICAL",
+							Optional:      map[string]string{"source": "nvd@nist.gov"},
+						},
+						{
+							Type:          Nvd,
+							Cvss3Score:    7.3,
+							Cvss3Vector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L",
+							Cvss3Severity: "HIGH",
+							Optional:      map[string]string{"source": "cna@vuldb.com"},
+						},
+					},
+				},
+			},
+			out: CveContentCvss{
+				Type: Mitre,
+				Value: Cvss{
+					Type:     CVSS40,
+					Score:    6.9,
+					Severity: "MEDIUM",
+					Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
 				},
 			},
 		},
@@ -1810,17 +1874,72 @@ func TestVulnInfo_PatchStatus(t *testing.T) {
 			want: "fixed",
 		},
 		{
-			name: "windows unfixed",
+			name: "WindowsRoughMatch",
+			fields: fields{
+				Confidences: Confidences{WindowsRoughMatch},
+			},
+			want: "unknown",
+		},
+		{
+			name: "WindowsRoughMatch and WindowsUpdateSearch",
+			fields: fields{
+				Confidences: Confidences{WindowsRoughMatch, WindowsUpdateSearch},
+			},
+			want: "unknown",
+		},
+		{
+			name: "WindowsUpdateSearch unknown",
+			fields: fields{
+				Confidences: Confidences{WindowsUpdateSearch},
+				AffectedPackages: PackageFixStatuses{
+					{
+						Name:     "Microsoft Edge",
+						FixState: "unknown",
+					},
+				},
+			},
+			want: "unknown",
+		},
+		{
+			name: "WindowsUpdateSearch unfixed",
+			fields: fields{
+				Confidences: Confidences{WindowsUpdateSearch},
+				AffectedPackages: PackageFixStatuses{
+					{
+						Name:     "Windows 10 Version 21H2 for x64-based Systems",
+						FixState: "unfixed",
+					},
+				},
+				WindowsKBFixedIns: []string{"000000"},
+			},
+			want: "unfixed",
+		},
+		{
+			name: "WindowsUpdateSearch unfixed2",
 			fields: fields{
 				Confidences: Confidences{WindowsUpdateSearch},
 			},
 			want: "unfixed",
 		},
 		{
-			name: "windows fixed",
+			name: "WindowsUpdateSearch fixed",
 			fields: fields{
 				Confidences:       Confidences{WindowsUpdateSearch},
 				WindowsKBFixedIns: []string{"000000"},
+			},
+			want: "fixed",
+		},
+		{
+			name: "WindowsUpdateSearch fixed2",
+			fields: fields{
+				Confidences: Confidences{WindowsUpdateSearch},
+				AffectedPackages: PackageFixStatuses{
+					{
+						Name:     "Microsoft Edge",
+						FixState: "fixed",
+						FixedIn:  "128.0.2739.79",
+					},
+				},
 			},
 			want: "fixed",
 		},
@@ -1835,6 +1954,130 @@ func TestVulnInfo_PatchStatus(t *testing.T) {
 			}
 			if got := v.PatchStatus(tt.args.packs); got != tt.want {
 				t.Errorf("VulnInfo.PatchStatus() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVulnInfo_Cvss40Scores(t *testing.T) {
+	type fields struct {
+		CveID       string
+		CveContents CveContents
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   []CveContentCvss
+	}{
+		{
+			name: "happy",
+			fields: fields{
+				CveID: "CVE-2024-5732",
+				CveContents: CveContents{
+					Mitre: []CveContent{
+						{
+							Type:           Mitre,
+							Cvss40Score:    6.9,
+							Cvss40Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
+							Cvss40Severity: "MEDIUM",
+							Cvss3Score:     7.3,
+							Cvss3Vector:    "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L",
+							Cvss3Severity:  "HIGH",
+							Optional:       map[string]string{"source": "CNA"},
+						},
+					},
+					Nvd: []CveContent{
+						{
+							Type:           Nvd,
+							Cvss40Score:    6.9,
+							Cvss40Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+							Cvss40Severity: "MEDIUM",
+							Optional:       map[string]string{"source": "cna@vuldb.com"},
+						},
+					},
+				},
+			},
+			want: []CveContentCvss{
+				{
+					Type: Mitre,
+					Value: Cvss{
+						Type:     CVSS40,
+						Score:    6.9,
+						Severity: "MEDIUM",
+						Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
+					},
+				},
+				{
+					Type: Nvd,
+					Value: Cvss{
+						Type:     CVSS40,
+						Score:    6.9,
+						Severity: "MEDIUM",
+						Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (VulnInfo{
+				CveID:       tt.fields.CveID,
+				CveContents: tt.fields.CveContents,
+			}).Cvss40Scores(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("VulnInfo.Cvss40Scores() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVulnInfo_MaxCvss40Score(t *testing.T) {
+	type fields struct {
+		CveID       string
+		CveContents CveContents
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   CveContentCvss
+	}{
+		{
+			name: "happy",
+			fields: fields{
+				CveID: "CVE-2024-5732",
+				CveContents: CveContents{
+					Mitre: []CveContent{
+						{
+							Type:           Mitre,
+							Cvss40Score:    6.9,
+							Cvss40Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
+							Cvss40Severity: "MEDIUM",
+							Cvss3Score:     7.3,
+							Cvss3Vector:    "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L",
+							Cvss3Severity:  "HIGH",
+							Optional:       map[string]string{"source": "CNA"},
+						},
+					},
+				},
+			},
+			want: CveContentCvss{
+				Type: Mitre,
+				Value: Cvss{
+					Type:     CVSS40,
+					Score:    6.9,
+					Severity: "MEDIUM",
+					Vector:   "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (VulnInfo{
+				CveID:       tt.fields.CveID,
+				CveContents: tt.fields.CveContents,
+			}).MaxCvss40Score(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("VulnInfo.MaxsCvss40Score() = %v, want %v", got, tt.want)
 			}
 		})
 	}

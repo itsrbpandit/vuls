@@ -3,6 +3,8 @@ package sbom
 import (
 	"bytes"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -10,7 +12,6 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/google/uuid"
 	"github.com/package-url/packageurl-go"
-	"golang.org/x/exp/maps"
 	"golang.org/x/xerrors"
 
 	"github.com/future-architect/vuls/constant"
@@ -36,11 +37,14 @@ func GenerateCycloneDX(format cdx.BOMFileFormat, r models.ScanResult) ([]byte, e
 func cdxMetadata(result models.ScanResult) *cdx.Metadata {
 	metadata := cdx.Metadata{
 		Timestamp: result.ReportedAt.Format(time.RFC3339),
-		Tools: &[]cdx.Tool{
-			{
-				Vendor:  "future-architect",
-				Name:    "vuls",
-				Version: fmt.Sprintf("%s-%s", result.ReportedVersion, result.ReportedRevision),
+		Tools: &cdx.ToolsChoice{
+			Components: &[]cdx.Component{
+				{
+					Type:    cdx.ComponentTypeApplication,
+					Author:  "future-architect",
+					Name:    "vuls",
+					Version: fmt.Sprintf("%s-%s", result.ReportedVersion, result.ReportedRevision),
+				},
 			},
 		},
 		Component: &cdx.Component{
@@ -249,14 +253,14 @@ func libpkgToCdxComponents(libscanner models.LibraryScanner, libpkgToPURL map[st
 			Properties: &[]cdx.Property{
 				{
 					Name:  "future-architect:vuls:Type",
-					Value: libscanner.Type,
+					Value: string(libscanner.Type),
 				},
 			},
 		},
 	}
 
 	for _, lib := range libscanner.Libs {
-		purl := packageurl.NewPackageURL(libscanner.Type, "", lib.Name, lib.Version, packageurl.Qualifiers{{Key: "file_path", Value: libscanner.LockfilePath}}, "").ToString()
+		purl := packageurl.NewPackageURL(string(libscanner.Type), "", lib.Name, lib.Version, packageurl.Qualifiers{{Key: "file_path", Value: libscanner.LockfilePath}}, "").ToString()
 		components = append(components, cdx.Component{
 			BOMRef:     purl,
 			Type:       cdx.ComponentTypeLibrary,
@@ -421,6 +425,9 @@ func cdxRatings(cveContents models.CveContents) *[]cdx.VulnerabilityRating {
 			if content.Cvss3Score != 0 || content.Cvss3Vector != "" || content.Cvss3Severity != "" {
 				ratings = append(ratings, cdxCVSS3Rating(string(content.Type), content.Cvss3Vector, content.Cvss3Score, content.Cvss3Severity))
 			}
+			if content.Cvss40Score != 0 || content.Cvss40Vector != "" || content.Cvss40Severity != "" {
+				ratings = append(ratings, cdxCVSS40Rating(string(content.Type), content.Cvss40Vector, content.Cvss40Score, content.Cvss40Severity))
+			}
 		}
 	}
 	return &ratings
@@ -456,6 +463,32 @@ func cdxCVSS3Rating(source, vector string, score float64, severity string) cdx.V
 	}
 	if strings.HasPrefix(vector, "CVSS:3.1") {
 		r.Method = cdx.ScoringMethodCVSSv31
+	}
+	if score != 0 {
+		r.Score = &score
+	}
+	switch strings.ToLower(severity) {
+	case "critical":
+		r.Severity = cdx.SeverityCritical
+	case "high":
+		r.Severity = cdx.SeverityHigh
+	case "medium":
+		r.Severity = cdx.SeverityMedium
+	case "low":
+		r.Severity = cdx.SeverityLow
+	case "none":
+		r.Severity = cdx.SeverityNone
+	default:
+		r.Severity = cdx.SeverityUnknown
+	}
+	return r
+}
+
+func cdxCVSS40Rating(source, vector string, score float64, severity string) cdx.VulnerabilityRating {
+	r := cdx.VulnerabilityRating{
+		Source: &cdx.Source{Name: source},
+		Method: cdx.ScoringMethodCVSSv4,
+		Vector: vector,
 	}
 	if score != 0 {
 		r.Score = &score
@@ -528,7 +561,7 @@ func cdxCWEs(cveContents models.CveContents) *[]int {
 			}
 		}
 	}
-	cweIDs := maps.Keys(m)
+	cweIDs := slices.Collect(maps.Keys(m))
 	return &cweIDs
 }
 

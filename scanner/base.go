@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	dio "github.com/aquasecurity/go-dep-parser/pkg/io"
-	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
-	debver "github.com/knqyf263/go-deb-version"
+	fanal "github.com/aquasecurity/trivy/pkg/fanal/analyzer"
+	tlog "github.com/aquasecurity/trivy/pkg/log"
+	xio "github.com/aquasecurity/trivy/pkg/x/io"
 
 	"github.com/future-architect/vuls/config"
 	"github.com/future-architect/vuls/constant"
@@ -29,13 +29,22 @@ import (
 
 	// Import library scanner
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/c/conan"
+	// Conda package is supported for SBOM, not for vulnerability scanning
+	// https://github.com/aquasecurity/trivy/blob/v0.49.1/pkg/detector/library/driver.go#L75-L77
+	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/conda/meta"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/dart/pub"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/dotnet/deps"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/dotnet/nuget"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/dotnet/packagesprops"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/elixir/mix"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/golang/binary"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/golang/mod"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/java/gradle"
-	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/java/jar"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/java/pom"
+
+	// Julia is supported for SBOM, not for vulnerability scanning
+	// https://github.com/aquasecurity/trivy/blob/v0.52.0/pkg/detector/library/driver.go#L84-L86
+	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/julia/pkg"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/npm"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/pnpm"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/yarn"
@@ -43,14 +52,26 @@ import (
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/python/pip"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/python/pipenv"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/python/poetry"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/python/uv"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/ruby/bundler"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/rust/binary"
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/rust/cargo"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/swift/cocoapods"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/swift/swift"
 
-	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/ruby/gemspec"
+	// Excleded ones:
+	// Trivy can parse package.json but doesn't use dependencies info. Not use here
 	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/pkg"
+	// No dependency information included
+	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/ruby/gemspec"
+	// No dependency information included
 	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/python/packaging"
 
 	nmap "github.com/Ullaakut/nmap/v2"
+
+	// To avoid downloading Java DB at scan phase, use custom one for JAR files
+	_ "github.com/future-architect/vuls/scanner/trivy/jar"
+	// _ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/java/jar"
 )
 
 type base struct {
@@ -74,9 +95,6 @@ type osPackages struct {
 
 	// installed source packages (Debian based only)
 	SrcPackages models.SrcPackages
-
-	// enabled dnf modules or packages
-	EnabledDnfModules []string
 
 	// Detected Vulnerabilities Key: CVE-ID
 	VulnInfos models.VulnInfos
@@ -130,19 +148,15 @@ func (l *base) runningKernel() (release, version string, err error) {
 
 	switch l.Distro.Family {
 	case constant.Debian:
-		r := l.exec("uname -a", noSudo)
+		r := l.exec(fmt.Sprintf("dpkg-query -W -f='${Version}' linux-image-%s", release), noSudo)
 		if !r.isSuccess() {
-			return "", "", xerrors.Errorf("Failed to SSH: %s", r)
+			l.log.Debugf("Failed to get the running kernel version. err: %s", r.Stderr)
+			return release, "", nil
 		}
-		ss := strings.Fields(r.Stdout)
-		if 6 < len(ss) {
-			version = ss[6]
-		}
-		if _, err := debver.NewVersion(version); err != nil {
-			version = ""
-		}
+		return release, r.Stdout, nil
+	default:
+		return release, "", nil
 	}
-	return
 }
 
 func (l *base) allContainers() (containers []config.Container, err error) {
@@ -528,7 +542,6 @@ func (l *base) convertToModel() models.ScanResult {
 		RunningKernel:     l.Kernel,
 		Packages:          l.Packages,
 		SrcPackages:       l.SrcPackages,
-		EnabledDnfModules: l.EnabledDnfModules,
 		WordPressPackages: l.WordPress,
 		LibraryScanners:   l.LibraryScanners,
 		WindowsKB:         l.windowsKB,
@@ -609,6 +622,8 @@ func (l *base) parseSystemctlStatus(stdout string) string {
 	return ss[1]
 }
 
+var trivyLoggerInit = sync.OnceFunc(func() { tlog.InitLogger(config.Conf.Debug, config.Conf.Quiet) })
+
 func (l *base) scanLibraries() (err error) {
 	if len(l.LibraryScanners) != 0 {
 		return nil
@@ -620,6 +635,8 @@ func (l *base) scanLibraries() (err error) {
 	}
 
 	l.log.Info("Scanning Language-specific Packages...")
+
+	trivyLoggerInit()
 
 	found := map[string]bool{}
 	detectFiles := l.ServerInfo.Lockfiles
@@ -720,8 +737,8 @@ func (l *base) scanLibraries() (err error) {
 
 // AnalyzeLibrary : detects library defined in artifact such as lockfile or jar
 func AnalyzeLibrary(ctx context.Context, path string, contents []byte, filemode os.FileMode, isOffline bool) (libraryScanners []models.LibraryScanner, err error) {
-	anal, err := analyzer.NewAnalyzerGroup(analyzer.AnalyzerOptions{
-		Group:             analyzer.GroupBuiltin,
+	ag, err := fanal.NewAnalyzerGroup(fanal.AnalyzerOptions{
+		Group:             fanal.GroupBuiltin,
 		DisabledAnalyzers: disabledAnalyzers,
 	})
 	if err != nil {
@@ -729,22 +746,50 @@ func AnalyzeLibrary(ctx context.Context, path string, contents []byte, filemode 
 	}
 
 	var wg sync.WaitGroup
-	result := new(analyzer.AnalysisResult)
-	if err := anal.AnalyzeFile(
+	result := new(fanal.AnalysisResult)
+
+	info := &DummyFileInfo{name: filepath.Base(path), size: int64(len(contents)), filemode: filemode}
+	opts := fanal.AnalysisOptions{Offline: isOffline}
+	if err := ag.AnalyzeFile(
 		ctx,
 		&wg,
 		semaphore.NewWeighted(1),
 		result,
 		"",
 		path,
-		&DummyFileInfo{name: filepath.Base(path), size: int64(len(contents)), filemode: filemode},
-		func() (dio.ReadSeekCloserAt, error) { return dio.NopCloser(bytes.NewReader(contents)), nil },
+		info,
+		func() (xio.ReadSeekCloserAt, error) { return xio.NopCloser(bytes.NewReader(contents)), nil },
 		nil,
-		analyzer.AnalysisOptions{Offline: isOffline},
+		opts,
 	); err != nil {
 		return nil, xerrors.Errorf("Failed to get libs. err: %w", err)
 	}
+
 	wg.Wait()
+
+	// Post-analysis
+	composite, err := ag.PostAnalyzerFS()
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare filesystem for post-analysis. err: %w", err)
+	}
+	defer func() {
+		_ = composite.Cleanup()
+	}()
+
+	analyzerTypes := ag.RequiredPostAnalyzers(path, info)
+	if len(analyzerTypes) != 0 {
+		opener := func() (xio.ReadSeekCloserAt, error) { return xio.NopCloser(bytes.NewReader(contents)), nil }
+		tmpFilePath, err := composite.CopyFileToTemp(opener, info)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to copy file to temp. err: %w", err)
+		}
+		if err := composite.CreateLink(analyzerTypes, "", path, tmpFilePath); err != nil {
+			return nil, xerrors.Errorf("Failed to create link. err: %w", err)
+		}
+		if err = ag.PostAnalyze(ctx, composite, result, opts); err != nil {
+			return nil, xerrors.Errorf("Failed at post-analysis. err: %w", err)
+		}
+	}
 
 	libscan, err := convertLibWithScanner(result.Applications)
 	if err != nil {
@@ -754,66 +799,77 @@ func AnalyzeLibrary(ctx context.Context, path string, contents []byte, filemode 
 	return libraryScanners, nil
 }
 
-// https://github.com/aquasecurity/trivy/blob/84677903a6fa1b707a32d0e8b2bffc23dde52afa/pkg/fanal/analyzer/const.go
-var disabledAnalyzers = []analyzer.Type{
+// https://github.com/aquasecurity/trivy/blob/v0.49.1/pkg/fanal/analyzer/const.go
+var disabledAnalyzers = []fanal.Type{
 	// ======
 	//   OS
 	// ======
-	analyzer.TypeOSRelease,
-	analyzer.TypeAlpine,
-	analyzer.TypeAmazon,
-	analyzer.TypeCBLMariner,
-	analyzer.TypeDebian,
-	analyzer.TypePhoton,
-	analyzer.TypeCentOS,
-	analyzer.TypeRocky,
-	analyzer.TypeAlma,
-	analyzer.TypeFedora,
-	analyzer.TypeOracle,
-	analyzer.TypeRedHatBase,
-	analyzer.TypeSUSE,
-	analyzer.TypeUbuntu,
+	fanal.TypeOSRelease,
+	fanal.TypeAlpine,
+	fanal.TypeAmazon,
+	fanal.TypeCBLMariner,
+	fanal.TypeDebian,
+	fanal.TypePhoton,
+	fanal.TypeCentOS,
+	fanal.TypeRocky,
+	fanal.TypeAlma,
+	fanal.TypeFedora,
+	fanal.TypeOracle,
+	fanal.TypeRedHatBase,
+	fanal.TypeSUSE,
+	fanal.TypeUbuntu,
+	fanal.TypeUbuntuESM,
 
 	// OS Package
-	analyzer.TypeApk,
-	analyzer.TypeDpkg,
-	analyzer.TypeDpkgLicense,
-	analyzer.TypeRpm,
-	analyzer.TypeRpmqa,
+	fanal.TypeApk,
+	fanal.TypeDpkg,
+	fanal.TypeDpkgLicense,
+	fanal.TypeRpm,
+	fanal.TypeRpmqa,
 
 	// OS Package Repository
-	analyzer.TypeApkRepo,
+	fanal.TypeApkRepo,
+
+	// ============
+	// Non-packaged
+	// ============
+	fanal.TypeExecutable,
+	fanal.TypeSBOM,
 
 	// ============
 	// Image Config
 	// ============
-	analyzer.TypeApkCommand,
+	fanal.TypeApkCommand,
+	fanal.TypeHistoryDockerfile,
+	fanal.TypeImageConfigSecret,
 
 	// =================
 	// Structured Config
 	// =================
-	analyzer.TypeYaml,
-	analyzer.TypeJSON,
-	analyzer.TypeDockerfile,
-	analyzer.TypeTerraform,
-	analyzer.TypeCloudFormation,
-	analyzer.TypeHelm,
+	fanal.TypeAzureARM,
+	fanal.TypeCloudFormation,
+	fanal.TypeDockerfile,
+	fanal.TypeHelm,
+	fanal.TypeKubernetes,
+	fanal.TypeTerraform,
+	fanal.TypeTerraformPlanJSON,
+	fanal.TypeTerraformPlanSnapshot,
 
 	// ========
 	// License
 	// ========
-	analyzer.TypeLicenseFile,
+	fanal.TypeLicenseFile,
 
 	// ========
 	// Secrets
 	// ========
-	analyzer.TypeSecret,
+	fanal.TypeSecret,
 
 	// =======
 	// Red Hat
 	// =======
-	analyzer.TypeRedHatContentManifestType,
-	analyzer.TypeRedHatDockerfileType,
+	fanal.TypeRedHatContentManifestType,
+	fanal.TypeRedHatDockerfileType,
 }
 
 // DummyFileInfo is a dummy struct for libscan
@@ -1328,15 +1384,10 @@ func (l *base) parseGrepProcMap(stdout string) (soPaths []string) {
 	return soPaths
 }
 
-var errLSOFNoInternetFiles = xerrors.New("no Internet files located")
-
 func (l *base) lsOfListen() (string, error) {
-	cmd := `lsof -i -P -n -V`
+	cmd := `lsof -i -P -n`
 	r := l.exec(util.PrependProxyEnv(cmd), sudo)
 	if !r.isSuccess() {
-		if strings.TrimSpace(r.Stdout) == "lsof: no Internet files located" {
-			return "", xerrors.Errorf("Failed to lsof: %w", errLSOFNoInternetFiles)
-		}
 		return "", xerrors.Errorf("Failed to lsof: %s", r)
 	}
 	return r.Stdout, nil
@@ -1392,7 +1443,7 @@ func (l *base) pkgPs(getOwnerPkgs func([]string) ([]string, error)) error {
 
 	pidListenPorts := map[string][]models.PortStat{}
 	stdout, err = l.lsOfListen()
-	if err != nil && !xerrors.Is(err, errLSOFNoInternetFiles) {
+	if err != nil {
 		// warning only, continue scanning
 		l.log.Warnf("Failed to lsof: %+v", err)
 	}

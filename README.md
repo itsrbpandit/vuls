@@ -64,7 +64,7 @@ Vuls is a tool created to solve the problems listed above. It has the following 
 - OVAL
   - [Red Hat](https://www.redhat.com/security/data/oval/)
   - [Debian](https://www.debian.org/security/oval/)
-  - [Ubuntu](https://people.canonical.com/~ubuntu-security/oval/)
+  - [Ubuntu](https://security-metadata.canonical.com/oval/)
   - [SUSE](http://ftp.suse.com/pub/projects/security/oval/)
   - [Oracle Linux](https://linux.oracle.com/security/oval/)
 
@@ -90,8 +90,9 @@ Vuls is a tool created to solve the problems listed above. It has the following 
   - [US-CERT](https://www.us-cert.gov/ncas/alerts)
   - [JPCERT](http://www.jpcert.or.jp/at/2019.html)
 
-- CISA(Cybersecurity & Infrastructure Security Agency)
-  - [Known Exploited Vulnerabilities Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+- KEV
+  - CISA(Cybersecurity & Infrastructure Security Agency): [Known Exploited Vulnerabilities Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+  - VulnCheck: [VulnCheck KEV](https://vulncheck.com/kev)
 
 - Cyber Threat Intelligence(MITRE ATT&CK and CAPEC)
   - [mitre/cti](https://github.com/mitre/cti)

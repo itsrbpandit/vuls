@@ -9,13 +9,13 @@ import (
 
 	"golang.org/x/xerrors"
 
-	"github.com/future-architect/vuls/config"
+	syslogConf "github.com/future-architect/vuls/config/syslog"
 	"github.com/future-architect/vuls/models"
 )
 
 // SyslogWriter send report to syslog
 type SyslogWriter struct {
-	Cnf config.SyslogConf
+	Cnf syslogConf.Conf
 }
 
 // Write results to syslog
@@ -71,6 +71,11 @@ func (w SyslogWriter) encodeSyslog(result models.ScanResult) (messages []string)
 		for _, cvss := range vinfo.Cvss3Scores() {
 			kvPairs = append(kvPairs, fmt.Sprintf(`cvss_score_%s_v3="%.2f"`, cvss.Type, cvss.Value.Score))
 			kvPairs = append(kvPairs, fmt.Sprintf(`cvss_vector_%s_v3="%s"`, cvss.Type, cvss.Value.Vector))
+		}
+
+		for _, cvss := range vinfo.Cvss40Scores() {
+			kvPairs = append(kvPairs, fmt.Sprintf(`cvss_score_%s_v40="%.2f"`, cvss.Type, cvss.Value.Score))
+			kvPairs = append(kvPairs, fmt.Sprintf(`cvss_vector_%s_v40="%s"`, cvss.Type, cvss.Value.Vector))
 		}
 
 		if conts, ok := vinfo.CveContents[models.Nvd]; ok {

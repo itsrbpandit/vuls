@@ -1,5 +1,4 @@
 //go:build !scanner
-// +build !scanner
 
 package oval
 
@@ -210,6 +209,7 @@ func TestIsOvalDefAffected(t *testing.T) {
 		in          in
 		affected    bool
 		notFixedYet bool
+		fixState    string
 		fixedIn     string
 		wantErr     bool
 	}{
@@ -1572,6 +1572,29 @@ func TestIsOvalDefAffected(t *testing.T) {
 			notFixedYet: false,
 			fixedIn:     "1.16.1-1.module+el8.3.0+8844+e5e7039f.1",
 		},
+		{
+			in: in{
+				family: constant.RedHat,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "nginx",
+							Version:         "1.16.1-1.module+el8.3.0+8844+e5e7039f.1",
+							NotFixedYet:     false,
+							ModularityLabel: "nginx:1.16",
+						},
+					},
+				},
+				req: request{
+					packName:        "nginx",
+					versionRelease:  "1.16.0-1.module+el8.3.0+8844+e5e7039f.1",
+					modularityLabel: "nginx:1.16:version:context",
+				},
+			},
+			affected:    true,
+			notFixedYet: false,
+			fixedIn:     "1.16.1-1.module+el8.3.0+8844+e5e7039f.1",
+		},
 		// dnf module 2
 		{
 			in: in{
@@ -1597,6 +1620,28 @@ func TestIsOvalDefAffected(t *testing.T) {
 			affected:    false,
 			notFixedYet: false,
 		},
+		{
+			in: in{
+				family: constant.RedHat,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "nginx",
+							Version:         "1.16.1-1.module+el8.3.0+8844+e5e7039f.1",
+							NotFixedYet:     false,
+							ModularityLabel: "nginx:1.16",
+						},
+					},
+				},
+				req: request{
+					packName:        "nginx",
+					versionRelease:  "1.16.2-1.module+el8.3.0+8844+e5e7039f.1",
+					modularityLabel: "nginx:1.16:version:context",
+				},
+			},
+			affected:    false,
+			notFixedYet: false,
+		},
 		// dnf module 3
 		{
 			in: in{
@@ -1617,6 +1662,28 @@ func TestIsOvalDefAffected(t *testing.T) {
 				},
 				mods: []string{
 					"nginx:1.14",
+				},
+			},
+			affected:    false,
+			notFixedYet: false,
+		},
+		{
+			in: in{
+				family: constant.RedHat,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "nginx",
+							Version:         "1.16.1-1.module+el8.3.0+8844+e5e7039f.1",
+							NotFixedYet:     false,
+							ModularityLabel: "nginx:1.16",
+						},
+					},
+				},
+				req: request{
+					packName:        "nginx",
+					versionRelease:  "1.16.0-1.module+el8.3.0+8844+e5e7039f.1",
+					modularityLabel: "nginx:1.14:version:context",
 				},
 			},
 			affected:    false,
@@ -1650,6 +1717,31 @@ func TestIsOvalDefAffected(t *testing.T) {
 			notFixedYet: false,
 			fixedIn:     "0:8.0.27-1.module_f35+13269+c9322734",
 		},
+		{
+			in: in{
+				family: constant.Fedora,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "community-mysql",
+							Version:         "0:8.0.27-1.module_f35+13269+c9322734",
+							Arch:            "x86_64",
+							NotFixedYet:     false,
+							ModularityLabel: "mysql:8.0:3520211031142409:f27b74a8",
+						},
+					},
+				},
+				req: request{
+					packName:        "community-mysql",
+					arch:            "x86_64",
+					versionRelease:  "8.0.26-1.module_f35+12627+b26747dd",
+					modularityLabel: "mysql:8.0:version:context",
+				},
+			},
+			affected:    true,
+			notFixedYet: false,
+			fixedIn:     "0:8.0.27-1.module_f35+13269+c9322734",
+		},
 		// dnf module 5 (req is non-modular package, oval is modular package)
 		{
 			in: in{
@@ -1677,6 +1769,29 @@ func TestIsOvalDefAffected(t *testing.T) {
 			affected:    false,
 			notFixedYet: false,
 		},
+		{
+			in: in{
+				family: constant.Fedora,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "community-mysql",
+							Version:         "0:8.0.27-1.module_f35+13269+c9322734",
+							Arch:            "x86_64",
+							NotFixedYet:     false,
+							ModularityLabel: "mysql:8.0:3520211031142409:f27b74a8",
+						},
+					},
+				},
+				req: request{
+					packName:       "community-mysql",
+					arch:           "x86_64",
+					versionRelease: "8.0.26-1.fc35",
+				},
+			},
+			affected:    false,
+			notFixedYet: false,
+		},
 		// dnf module 6 (req is modular package, oval is non-modular package)
 		{
 			in: in{
@@ -1699,6 +1814,30 @@ func TestIsOvalDefAffected(t *testing.T) {
 				},
 				mods: []string{
 					"mysql:8.0",
+				},
+			},
+			affected:    false,
+			notFixedYet: false,
+		},
+		{
+			in: in{
+				family: constant.Fedora,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "community-mysql",
+							Version:         "0:8.0.27-1.fc35",
+							Arch:            "x86_64",
+							NotFixedYet:     false,
+							ModularityLabel: "",
+						},
+					},
+				},
+				req: request{
+					packName:        "community-mysql",
+					arch:            "x86_64",
+					versionRelease:  "8.0.26-1.module_f35+12627+b26747dd",
+					modularityLabel: "mysql:8.0:3520211031142409:f27b74a8",
 				},
 			},
 			affected:    false,
@@ -1746,6 +1885,112 @@ func TestIsOvalDefAffected(t *testing.T) {
 			},
 			affected: true,
 			fixedIn:  "2:2.17-106.0.1.ksplice1.el7_2.4",
+		},
+		// .ksplice2.
+		{
+			in: in{
+				family: constant.Oracle,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "nginx",
+							Version: "2:2.17-106.0.1.ksplice2.el7_2.4",
+							Arch:    "x86_64",
+						},
+					},
+				},
+				req: request{
+					packName:       "nginx",
+					versionRelease: "2:2.17-107",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		// in: .ksplice1. , req: .ksplice2.
+		{
+			in: in{
+				family: constant.Oracle,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "nginx",
+							Version: "2:2.17-106.0.1.ksplice1.el7_2.4",
+							Arch:    "x86_64",
+						},
+					},
+				},
+				req: request{
+					packName:       "nginx",
+					versionRelease: "2:2.17-105.0.1.ksplice2.el7_2.4",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		// in: _fips , req: not fips
+		{
+			in: in{
+				family: constant.Oracle,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "gnutls",
+							Version: "10:3.6.16-4.0.1.el8_fips",
+							Arch:    "x86_64",
+						},
+					},
+				},
+				req: request{
+					packName:       "gnutls",
+					versionRelease: "3.6.16-4.el8",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		// in: _fips , req: _fips
+		{
+			in: in{
+				family: constant.Oracle,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "gnutls",
+							Version: "10:3.6.16-8.el8_9.3_fips",
+							Arch:    "x86_64",
+						},
+					},
+				},
+				req: request{
+					packName:       "gnutls",
+					versionRelease: "10:3.6.16-4.0.1.el8_fips",
+					arch:           "x86_64",
+				},
+			},
+			affected: true,
+			fixedIn:  "10:3.6.16-8.el8_9.3_fips",
+		},
+		// in: non fips (upstream?), req: _fips
+		{
+			in: in{
+				family: constant.Oracle,
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "gnutls",
+							Version: "0:3.6.16-5.el8_6",
+							Arch:    "x86_64",
+						},
+					},
+				},
+				req: request{
+					packName:       "gnutls",
+					versionRelease: "10:3.6.16-4.0.1.el8_fips",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
 		},
 		// same arch
 		{
@@ -1910,10 +2155,406 @@ func TestIsOvalDefAffected(t *testing.T) {
 			affected: false,
 			fixedIn:  "",
 		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Affected",
+								Components: []ovalmodels.Component{
+									{
+										Component: "kernel",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "Affected",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Fix deferred",
+								Components: []ovalmodels.Component{
+									{
+										Component: "kernel",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "Fix deferred",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Out of support scope",
+								Components: []ovalmodels.Component{
+									{
+										Component: "kernel",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "Out of support scope",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Will not fix",
+								Components: []ovalmodels.Component{
+									{
+										Component: "kernel",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    false,
+			notFixedYet: true,
+			fixState:    "Will not fix",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Under investigation",
+								Components: []ovalmodels.Component{
+									{
+										Component: "kernel",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:        "kernel",
+							NotFixedYet: true,
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel",
+					versionRelease: "4.18.0-513.5.1.el8_9",
+					arch:           "x86_64",
+				},
+			},
+			affected:    false,
+			notFixedYet: true,
+			fixState:    "Under investigation",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Affected",
+								Components: []ovalmodels.Component{
+									{
+										Component: "nodejs:20/nodejs",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "nodejs",
+							NotFixedYet:     true,
+							ModularityLabel: "nodejs:20",
+						},
+					},
+				},
+				req: request{
+					packName:       "nodejs",
+					versionRelease: "1:20.11.1-1.module+el8.9.0+21380+12032667",
+					arch:           "x86_64",
+				},
+				mods: []string{"nodejs:20"},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "Affected",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.RedHat,
+				release: "8",
+				def: ovalmodels.Definition{
+					Advisory: ovalmodels.Advisory{
+						AffectedResolution: []ovalmodels.Resolution{
+							{
+								State: "Affected",
+								Components: []ovalmodels.Component{
+									{
+										Component: "nodejs:20/nodejs",
+									},
+								},
+							},
+						},
+					},
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:            "nodejs",
+							NotFixedYet:     true,
+							ModularityLabel: "nodejs:20",
+						},
+					},
+				},
+				req: request{
+					packName:        "nodejs",
+					versionRelease:  "1:20.11.1-1.module+el8.9.0+21380+12032667",
+					modularityLabel: "nodejs:20:version:context",
+					arch:            "x86_64",
+				},
+			},
+			affected:    true,
+			notFixedYet: true,
+			fixState:    "Affected",
+			fixedIn:     "",
+		},
+		{
+			in: in{
+				family:  constant.SUSEEnterpriseServer,
+				release: "12.3",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "kernel-default",
+							Version: "0:4.4.140-96.98",
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel-default",
+					versionRelease: "0:4.4.140-96.97",
+					arch:           "x86_64",
+				},
+			},
+			affected: true,
+			fixedIn:  "0:4.4.140-96.98",
+		},
+		{
+			in: in{
+				family:  constant.SUSEEnterpriseServer,
+				release: "12.3",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "kernel-default",
+							Version: "0:4.4.140-96.97.TDC.1",
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel-default",
+					versionRelease: "0:4.4.140-96.97",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		{
+			in: in{
+				family:  constant.SUSEEnterpriseServer,
+				release: "12.3",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "kernel-default",
+							Version: "0:4.4.180-94.156.1",
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel-default",
+					versionRelease: "0:4.4.140-96.126.TDC.1",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		{
+			in: in{
+				family:  constant.SUSEEnterpriseServer,
+				release: "12.3",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "kernel-default",
+							Version: "0:4.4.140-96.97.TDC.2",
+						},
+					},
+				},
+				req: request{
+					packName:       "kernel-default",
+					versionRelease: "0:4.4.140-96.97.TDC.1",
+					arch:           "x86_64",
+				},
+			},
+			affected: true,
+			fixedIn:  "0:4.4.140-96.97.TDC.2",
+		},
+		{
+			in: in{
+				family:  constant.Alpine,
+				release: "3.20",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "openssl",
+							Version: "3.3.2-r0",
+						},
+					},
+				},
+				req: request{
+					packName:       "openssl",
+					versionRelease: "3.3.1-r3",
+					arch:           "x86_64",
+				},
+			},
+			affected: false,
+		},
+		{
+			in: in{
+				family:  constant.Alpine,
+				release: "3.20",
+				def: ovalmodels.Definition{
+					AffectedPacks: []ovalmodels.Package{
+						{
+							Name:    "openssl",
+							Version: "3.3.2-r0",
+						},
+					},
+				},
+				req: request{
+					packName:        "openssl",
+					versionRelease:  "3.3.1-r3",
+					binaryPackNames: []string{"openssl", "libssl3"},
+					isSrcPack:       true,
+				},
+			},
+			affected: true,
+			fixedIn:  "3.3.2-r0",
+		},
 	}
 
 	for i, tt := range tests {
-		affected, notFixedYet, fixedIn, err := isOvalDefAffected(tt.in.def, tt.in.req, tt.in.family, tt.in.release, tt.in.kernel, tt.in.mods)
+		affected, notFixedYet, fixState, fixedIn, err := isOvalDefAffected(tt.in.def, tt.in.req, tt.in.family, tt.in.release, tt.in.kernel, tt.in.mods)
 		if tt.wantErr != (err != nil) {
 			t.Errorf("[%d] err\nexpected: %t\n  actual: %s\n", i, tt.wantErr, err)
 		}
@@ -1922,6 +2563,9 @@ func TestIsOvalDefAffected(t *testing.T) {
 		}
 		if tt.notFixedYet != notFixedYet {
 			t.Errorf("[%d] notfixedyet\nexpected: %v\n  actual: %v\n", i, tt.notFixedYet, notFixedYet)
+		}
+		if tt.fixState != fixState {
+			t.Errorf("[%d] fixedState\nexpected: %v\n  actual: %v\n", i, tt.fixState, fixState)
 		}
 		if tt.fixedIn != fixedIn {
 			t.Errorf("[%d] fixedIn\nexpected: %v\n  actual: %v\n", i, tt.fixedIn, fixedIn)

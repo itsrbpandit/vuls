@@ -1,10 +1,14 @@
 package pkg
 
 import (
+	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/aquasecurity/trivy/pkg/fanal/analyzer/os"
+	trivydbTypes "github.com/aquasecurity/trivy-db/pkg/types"
+	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 
 	"github.com/future-architect/vuls/models"
@@ -67,16 +71,56 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
 				lastModified = *vuln.LastModifiedDate
 			}
 
-			vulnInfo.CveContents = models.CveContents{
-				models.Trivy: []models.CveContent{{
-					Cvss3Severity: vuln.Severity,
-					References:    references,
+			for source, severity := range vuln.VendorSeverity {
+				severities := []string{trivydbTypes.SeverityNames[severity]}
+				if cs, ok := vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))]; ok {
+					for _, c := range cs {
+						for _, s := range strings.Split(c.Cvss3Severity, "|") {
+							if s != "" && !slices.Contains(severities, s) {
+								severities = append(severities, s)
+							}
+						}
+					}
+				}
+				slices.SortFunc(severities, func(a, b string) int { return -trivydbTypes.CompareSeverityString(a, b) })
+
+				vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))] = []models.CveContent{{
+					Type:          models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source)),
+					CveID:         vuln.VulnerabilityID,
 					Title:         vuln.Title,
 					Summary:       vuln.Description,
+					Cvss3Severity: strings.Join(severities, "|"),
 					Published:     published,
 					LastModified:  lastModified,
-				}},
+					References:    references,
+				}}
 			}
+
+			for source, cvss := range vuln.CVSS {
+				if cs, ok := vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))]; ok &&
+					slices.ContainsFunc(cs, func(c models.CveContent) bool {
+						return c.Cvss2Score == cvss.V2Score && c.Cvss2Vector == cvss.V2Vector && c.Cvss3Score == cvss.V3Score && c.Cvss3Vector == cvss.V3Vector && c.Cvss40Score == cvss.V40Score && c.Cvss40Vector == cvss.V40Vector
+					}) {
+					continue
+				}
+
+				vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))] = append(vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))], models.CveContent{
+					Type:         models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source)),
+					CveID:        vuln.VulnerabilityID,
+					Title:        vuln.Title,
+					Summary:      vuln.Description,
+					Cvss2Score:   cvss.V2Score,
+					Cvss2Vector:  cvss.V2Vector,
+					Cvss3Score:   cvss.V3Score,
+					Cvss3Vector:  cvss.V3Vector,
+					Cvss40Score:  cvss.V40Score,
+					Cvss40Vector: cvss.V40Vector,
+					Published:    published,
+					LastModified: lastModified,
+					References:   references,
+				})
+			}
+
 			// do only if image type is Vuln
 			if isTrivySupportedOS(trivyResult.Type) {
 				pkgs[vuln.PkgName] = models.Package{
@@ -91,8 +135,9 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
 				})
 			} else {
 				vulnInfo.LibraryFixedIns = append(vulnInfo.LibraryFixedIns, models.LibraryFixedIn{
-					Key:     trivyResult.Type,
+					Key:     string(trivyResult.Type),
 					Name:    vuln.PkgName,
+					Version: vuln.InstalledVersion,
 					Path:    trivyResult.Target,
 					FixedIn: vuln.FixedVersion,
 				})
@@ -111,22 +156,35 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
 		// --list-all-pkgs flg of trivy will output all installed packages, so collect them.
 		if trivyResult.Class == types.ClassOSPkg {
 			for _, p := range trivyResult.Packages {
+				pv := p.Version
+				if p.Release != "" {
+					pv = fmt.Sprintf("%s-%s", pv, p.Release)
+				}
+				if p.Epoch > 0 {
+					pv = fmt.Sprintf("%d:%s", p.Epoch, pv)
+				}
 				pkgs[p.Name] = models.Package{
 					Name:    p.Name,
-					Version: p.Version,
+					Version: pv,
+					Arch:    p.Arch,
 				}
-				if p.Name != p.SrcName {
-					if v, ok := srcPkgs[p.SrcName]; !ok {
-						srcPkgs[p.SrcName] = models.SrcPackage{
-							Name:        p.SrcName,
-							Version:     p.SrcVersion,
-							BinaryNames: []string{p.Name},
-						}
-					} else {
-						v.AddBinaryName(p.Name)
-						srcPkgs[p.SrcName] = v
+
+				v, ok := srcPkgs[p.SrcName]
+				if !ok {
+					sv := p.SrcVersion
+					if p.SrcRelease != "" {
+						sv = fmt.Sprintf("%s-%s", sv, p.SrcRelease)
+					}
+					if p.SrcEpoch > 0 {
+						sv = fmt.Sprintf("%d:%s", p.SrcEpoch, sv)
+					}
+					v = models.SrcPackage{
+						Name:    p.SrcName,
+						Version: sv,
 					}
 				}
+				v.AddBinaryName(p.Name)
+				srcPkgs[p.SrcName] = v
 			}
 		} else if trivyResult.Class == types.ClassLangPkg {
 			libScanner := uniqueLibraryScannerPaths[trivyResult.Target]
@@ -135,6 +193,7 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
 				libScanner.Libs = append(libScanner.Libs, models.Library{
 					Name:     p.Name,
 					Version:  p.Version,
+					PURL:     getPURL(p),
 					FilePath: p.FilePath,
 				})
 			}
@@ -176,25 +235,34 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
 	return scanResult, nil
 }
 
-func isTrivySupportedOS(family string) bool {
-	supportedFamilies := map[string]struct{}{
-		os.RedHat:             {},
-		os.Debian:             {},
-		os.Ubuntu:             {},
-		os.CentOS:             {},
-		os.Rocky:              {},
-		os.Alma:               {},
-		os.Fedora:             {},
-		os.Amazon:             {},
-		os.Oracle:             {},
-		os.Windows:            {},
-		os.OpenSUSE:           {},
-		os.OpenSUSELeap:       {},
-		os.OpenSUSETumbleweed: {},
-		os.SLES:               {},
-		os.Photon:             {},
-		os.Alpine:             {},
+func isTrivySupportedOS(family ftypes.TargetType) bool {
+	supportedFamilies := map[ftypes.TargetType]struct{}{
+		ftypes.Alma:               {},
+		ftypes.Alpine:             {},
+		ftypes.Amazon:             {},
+		ftypes.CBLMariner:         {},
+		ftypes.CentOS:             {},
+		ftypes.Chainguard:         {},
+		ftypes.Debian:             {},
+		ftypes.Fedora:             {},
+		ftypes.OpenSUSE:           {},
+		ftypes.OpenSUSELeap:       {},
+		ftypes.OpenSUSETumbleweed: {},
+		ftypes.Oracle:             {},
+		ftypes.Photon:             {},
+		ftypes.RedHat:             {},
+		ftypes.Rocky:              {},
+		ftypes.SLES:               {},
+		ftypes.Ubuntu:             {},
+		ftypes.Wolfi:              {},
 	}
 	_, ok := supportedFamilies[family]
 	return ok
+}
+
+func getPURL(p ftypes.Package) string {
+	if p.Identifier.PURL == nil {
+		return ""
+	}
+	return p.Identifier.PURL.String()
 }

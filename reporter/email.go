@@ -10,9 +10,10 @@ import (
 
 	sasl "github.com/emersion/go-sasl"
 	smtp "github.com/emersion/go-smtp"
+	"golang.org/x/xerrors"
+
 	"github.com/future-architect/vuls/config"
 	"github.com/future-architect/vuls/models"
-	"golang.org/x/xerrors"
 )
 
 // EMailWriter send mail
@@ -89,36 +90,58 @@ type emailSender struct {
 }
 
 func (e *emailSender) sendMail(smtpServerAddr, message string) (err error) {
-	var c *smtp.Client
 	var auth sasl.Client
 	emailConf := e.conf
-	//TLS Config
 	tlsConfig := &tls.Config{
-		ServerName: emailConf.SMTPAddr,
+		ServerName:         emailConf.SMTPAddr,
+		InsecureSkipVerify: emailConf.TLSInsecureSkipVerify,
 	}
-	switch emailConf.SMTPPort {
-	case "465":
-		//New TLS connection
-		c, err = smtp.DialTLS(smtpServerAddr, tlsConfig)
-		if err != nil {
-			return xerrors.Errorf("Failed to create TLS connection to SMTP server: %w", err)
+
+	var c *smtp.Client
+	switch emailConf.TLSMode {
+	case "":
+		switch emailConf.SMTPPort {
+		case "465":
+			c, err = smtp.DialTLS(smtpServerAddr, tlsConfig)
+			if err != nil {
+				return xerrors.Errorf("Failed to create TLS connection to SMTP server: %w", err)
+			}
+			defer c.Close()
+		default:
+			c, err = smtp.Dial(smtpServerAddr)
+			if err != nil {
+				return xerrors.Errorf("Failed to create connection to SMTP server: %w", err)
+			}
+			defer c.Close()
+
+			if ok, _ := c.Extension("STARTTLS"); ok {
+				c, err = smtp.DialStartTLS(smtpServerAddr, tlsConfig)
+				if err != nil {
+					return xerrors.Errorf("Failed to create STARTTLS connection to SMTP server: %w", err)
+				}
+				defer c.Close()
+			}
 		}
-	default:
+	case "None":
 		c, err = smtp.Dial(smtpServerAddr)
 		if err != nil {
 			return xerrors.Errorf("Failed to create connection to SMTP server: %w", err)
 		}
-	}
-	defer c.Close()
-
-	if err = c.Hello("localhost"); err != nil {
-		return xerrors.Errorf("Failed to send Hello command: %w", err)
-	}
-
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err := c.StartTLS(tlsConfig); err != nil {
-			return xerrors.Errorf("Failed to STARTTLS: %w", err)
+		defer c.Close()
+	case "STARTTLS":
+		c, err = smtp.DialStartTLS(smtpServerAddr, tlsConfig)
+		if err != nil {
+			return xerrors.Errorf("Failed to create STARTTLS connection to SMTP server: %w", err)
 		}
+		defer c.Close()
+	case "SMTPS":
+		c, err = smtp.DialTLS(smtpServerAddr, tlsConfig)
+		if err != nil {
+			return xerrors.Errorf("Failed to create TLS connection to SMTP server: %w", err)
+		}
+		defer c.Close()
+	default:
+		return xerrors.New(`invalid TLS mode. accepts: ["", "None", "STARTTLS", "SMTPS"]`)
 	}
 
 	if ok, param := c.Extension("AUTH"); ok {
@@ -133,7 +156,7 @@ func (e *emailSender) sendMail(smtpServerAddr, message string) (err error) {
 		return xerrors.Errorf("Failed to send Mail command: %w", err)
 	}
 	for _, to := range emailConf.To {
-		if err = c.Rcpt(to); err != nil {
+		if err = c.Rcpt(to, nil); err != nil {
 			return xerrors.Errorf("Failed to send Rcpt command: %w", err)
 		}
 	}
@@ -178,19 +201,7 @@ func (e *emailSender) Send(subject, body string) (err error) {
 	for k, v := range headers {
 		header += fmt.Sprintf("%s: %s\r\n", k, v)
 	}
-	message := fmt.Sprintf("%s\r\n%s", header, body)
-
-	smtpServer := net.JoinHostPort(emailConf.SMTPAddr, emailConf.SMTPPort)
-
-	if emailConf.User != "" && emailConf.Password != "" {
-		err = e.sendMail(smtpServer, message)
-		if err != nil {
-			return xerrors.Errorf("Failed to send emails: %w", err)
-		}
-		return nil
-	}
-	err = e.sendMail(smtpServer, message)
-	if err != nil {
+	if err := e.sendMail(net.JoinHostPort(emailConf.SMTPAddr, emailConf.SMTPPort), fmt.Sprintf("%s\r\n%s", header, body)); err != nil {
 		return xerrors.Errorf("Failed to send emails: %w", err)
 	}
 	return nil

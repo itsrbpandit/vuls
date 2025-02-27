@@ -40,21 +40,19 @@ var dockerTagPattern = regexp.MustCompile(`^(.*):(.*)$`)
 
 func setScanResultMeta(scanResult *models.ScanResult, report *types.Report) error {
 	if len(report.Results) == 0 {
-		return xerrors.Errorf("scanned images or libraries are not supported by Trivy. see https://aquasecurity.github.io/trivy/dev/vulnerability/detection/os/, https://aquasecurity.github.io/trivy/dev/vulnerability/detection/language/")
+		return xerrors.Errorf("scanned images or libraries are not supported by Trivy. see https://aquasecurity.github.io/trivy/dev/docs/coverage/os/, https://aquasecurity.github.io/trivy/dev/docs/coverage/language/")
 	}
 
 	scanResult.ServerName = report.ArtifactName
 	if report.ArtifactType == "container_image" {
 		matches := dockerTagPattern.FindStringSubmatch(report.ArtifactName)
-		var imageName, imageTag string
+		// initial values are for without image tag
+		var imageName = report.ArtifactName
+		var imageTag = "latest" // Complement if the tag is omitted
 		if 2 < len(matches) {
 			// including the image tag
 			imageName = matches[1]
 			imageTag = matches[2]
-		} else {
-			// no image tag
-			imageName = report.ArtifactName
-			imageTag = "latest" // Complement if the tag is omitted
 		}
 		scanResult.ServerName = fmt.Sprintf("%s:%s", imageName, imageTag)
 		if scanResult.Optional == nil {
@@ -64,11 +62,10 @@ func setScanResultMeta(scanResult *models.ScanResult, report *types.Report) erro
 		scanResult.Optional["TRIVY_IMAGE_TAG"] = imageTag
 	}
 
+	scanResult.Family = constant.ServerTypePseudo
 	if report.Metadata.OS != nil {
-		scanResult.Family = report.Metadata.OS.Family
+		scanResult.Family = string(report.Metadata.OS.Family)
 		scanResult.Release = report.Metadata.OS.Name
-	} else {
-		scanResult.Family = constant.ServerTypePseudo
 	}
 
 	scanResult.ScannedAt = time.Now()

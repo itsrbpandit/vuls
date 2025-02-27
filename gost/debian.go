@@ -1,18 +1,19 @@
 //go:build !scanner
-// +build !scanner
 
 package gost
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"maps"
+	"slices"
 	"strings"
 
 	debver "github.com/knqyf263/go-deb-version"
-	"golang.org/x/exp/maps"
 	"golang.org/x/xerrors"
 
+	"github.com/future-architect/vuls/constant"
 	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
 	"github.com/future-architect/vuls/util"
@@ -86,20 +87,16 @@ func (deb Debian) detectCVEsWithFixState(r *models.ScanResult, fixed bool) ([]st
 				continue
 			}
 
-			n := strings.NewReplacer("linux-signed", "linux", "linux-latest", "linux", "-amd64", "", "-arm64", "", "-i386", "").Replace(res.request.packName)
-
-			if deb.isKernelSourcePackage(n) {
-				isRunning := false
-				for _, bn := range r.SrcPackages[res.request.packName].BinaryNames {
-					if bn == fmt.Sprintf("linux-image-%s", r.RunningKernel.Release) {
-						isRunning = true
-						break
-					}
+			// To detect vulnerabilities in running kernels only, skip if the kernel is not running.
+			if models.IsKernelSourcePackage(constant.Debian, res.request.packName) && !slices.ContainsFunc(r.SrcPackages[res.request.packName].BinaryNames, func(bn string) bool {
+				switch bn {
+				case fmt.Sprintf("linux-image-%s", r.RunningKernel.Release), fmt.Sprintf("linux-headers-%s", r.RunningKernel.Release):
+					return true
+				default:
+					return false
 				}
-				// To detect vulnerabilities in running kernels only, skip if the kernel is not running.
-				if !isRunning {
-					continue
-				}
+			}) {
+				continue
 			}
 
 			cs := map[string]gostmodels.DebianCVE{}
@@ -109,6 +106,16 @@ func (deb Debian) detectCVEsWithFixState(r *models.ScanResult, fixed bool) ([]st
 			for _, content := range deb.detect(cs, models.SrcPackage{Name: res.request.packName, Version: r.SrcPackages[res.request.packName].Version, BinaryNames: r.SrcPackages[res.request.packName].BinaryNames}, models.Kernel{Release: r.RunningKernel.Release, Version: r.Packages[fmt.Sprintf("linux-image-%s", r.RunningKernel.Release)].Version}) {
 				c, ok := detects[content.cveContent.CveID]
 				if ok {
+					m := map[string]struct{}{}
+					for _, s := range append(strings.Split(content.cveContent.Cvss3Severity, "|"), strings.Split(c.cveContent.Cvss3Severity, "|")...) {
+						m[s] = struct{}{}
+					}
+					ss := slices.Collect(maps.Keys(m))
+					slices.SortFunc(ss, deb.CompareSeverity)
+					severty := strings.Join(ss, "|")
+					content.cveContent.Cvss2Severity = severty
+					content.cveContent.Cvss3Severity = severty
+
 					content.fixStatuses = append(content.fixStatuses, c.fixStatuses...)
 				}
 				detects[content.cveContent.CveID] = content
@@ -116,25 +123,26 @@ func (deb Debian) detectCVEsWithFixState(r *models.ScanResult, fixed bool) ([]st
 		}
 	} else {
 		for _, p := range r.SrcPackages {
-			n := strings.NewReplacer("linux-signed", "linux", "linux-latest", "linux", "-amd64", "", "-arm64", "", "-i386", "").Replace(p.Name)
-
-			if deb.isKernelSourcePackage(n) {
-				isRunning := false
-				for _, bn := range p.BinaryNames {
-					if bn == fmt.Sprintf("linux-image-%s", r.RunningKernel.Release) {
-						isRunning = true
-						break
-					}
+			// To detect vulnerabilities in running kernels only, skip if the kernel is not running.
+			if models.IsKernelSourcePackage(constant.Debian, p.Name) && !slices.ContainsFunc(p.BinaryNames, func(bn string) bool {
+				switch bn {
+				case fmt.Sprintf("linux-image-%s", r.RunningKernel.Release), fmt.Sprintf("linux-headers-%s", r.RunningKernel.Release):
+					return true
+				default:
+					return false
 				}
-				// To detect vulnerabilities in running kernels only, skip if the kernel is not running.
-				if !isRunning {
-					continue
-				}
+			}) {
+				continue
 			}
 
 			var f func(string, string) (map[string]gostmodels.DebianCVE, error) = deb.driver.GetFixedCvesDebian
 			if !fixed {
 				f = deb.driver.GetUnfixedCvesDebian
+			}
+
+			n := p.Name
+			if models.IsKernelSourcePackage(constant.Debian, p.Name) {
+				n = models.RenameKernelSourcePackageName(constant.Debian, p.Name)
 			}
 			cs, err := f(major(r.Release), n)
 			if err != nil {
@@ -143,6 +151,16 @@ func (deb Debian) detectCVEsWithFixState(r *models.ScanResult, fixed bool) ([]st
 			for _, content := range deb.detect(cs, p, models.Kernel{Release: r.RunningKernel.Release, Version: r.Packages[fmt.Sprintf("linux-image-%s", r.RunningKernel.Release)].Version}) {
 				c, ok := detects[content.cveContent.CveID]
 				if ok {
+					m := map[string]struct{}{}
+					for _, s := range append(strings.Split(content.cveContent.Cvss3Severity, "|"), strings.Split(c.cveContent.Cvss3Severity, "|")...) {
+						m[s] = struct{}{}
+					}
+					ss := slices.Collect(maps.Keys(m))
+					slices.SortFunc(ss, deb.CompareSeverity)
+					severty := strings.Join(ss, "|")
+					content.cveContent.Cvss2Severity = severty
+					content.cveContent.Cvss3Severity = severty
+
 					content.fixStatuses = append(content.fixStatuses, c.fixStatuses...)
 				}
 				detects[content.cveContent.CveID] = content
@@ -173,32 +191,10 @@ func (deb Debian) detectCVEsWithFixState(r *models.ScanResult, fixed bool) ([]st
 		r.ScannedCves[content.cveContent.CveID] = v
 	}
 
-	return maps.Keys(detects), nil
-}
-
-func (deb Debian) isKernelSourcePackage(pkgname string) bool {
-	switch ss := strings.Split(pkgname, "-"); len(ss) {
-	case 1:
-		return pkgname == "linux"
-	case 2:
-		if ss[0] != "linux" {
-			return false
-		}
-		switch ss[1] {
-		case "grsec":
-			return true
-		default:
-			_, err := strconv.ParseFloat(ss[1], 64)
-			return err == nil
-		}
-	default:
-		return false
-	}
+	return slices.Collect(maps.Keys(detects)), nil
 }
 
 func (deb Debian) detect(cves map[string]gostmodels.DebianCVE, srcPkg models.SrcPackage, runningKernel models.Kernel) []cveContent {
-	n := strings.NewReplacer("linux-signed", "linux", "linux-latest", "linux", "-amd64", "", "-arm64", "", "-i386", "").Replace(srcPkg.Name)
-
 	var contents []cveContent
 	for _, cve := range cves {
 		c := cveContent{
@@ -210,9 +206,6 @@ func (deb Debian) detect(cves map[string]gostmodels.DebianCVE, srcPkg models.Src
 				switch r.Status {
 				case "open", "undetermined":
 					for _, bn := range srcPkg.BinaryNames {
-						if deb.isKernelSourcePackage(n) && bn != fmt.Sprintf("linux-image-%s", runningKernel.Release) {
-							continue
-						}
 						c.fixStatuses = append(c.fixStatuses, models.PackageFixStatus{
 							Name:        bn,
 							FixState:    r.Status,
@@ -223,7 +216,7 @@ func (deb Debian) detect(cves map[string]gostmodels.DebianCVE, srcPkg models.Src
 					installedVersion := srcPkg.Version
 					patchedVersion := r.FixedVersion
 
-					if deb.isKernelSourcePackage(n) {
+					if models.IsKernelSourcePackage(constant.Debian, srcPkg.Name) {
 						installedVersion = runningKernel.Version
 					}
 
@@ -235,9 +228,6 @@ func (deb Debian) detect(cves map[string]gostmodels.DebianCVE, srcPkg models.Src
 
 					if affected {
 						for _, bn := range srcPkg.BinaryNames {
-							if deb.isKernelSourcePackage(n) && bn != fmt.Sprintf("linux-image-%s", runningKernel.Release) {
-								continue
-							}
 							c.fixStatuses = append(c.fixStatuses, models.PackageFixStatus{
 								Name:    bn,
 								FixedIn: patchedVersion,
@@ -271,13 +261,16 @@ func (deb Debian) isGostDefAffected(versionRelease, gostVersion string) (affecte
 
 // ConvertToModel converts gost model to vuls model
 func (deb Debian) ConvertToModel(cve *gostmodels.DebianCVE) *models.CveContent {
-	severity := ""
+	m := map[string]struct{}{}
 	for _, p := range cve.Package {
 		for _, r := range p.Release {
-			severity = r.Urgency
-			break
+			m[r.Urgency] = struct{}{}
 		}
 	}
+	ss := slices.Collect(maps.Keys(m))
+	slices.SortFunc(ss, deb.CompareSeverity)
+	severity := strings.Join(ss, "|")
+
 	var optinal map[string]string
 	if cve.Scope != "" {
 		optinal = map[string]string{"attack range": cve.Scope}
@@ -291,4 +284,11 @@ func (deb Debian) ConvertToModel(cve *gostmodels.DebianCVE) *models.CveContent {
 		SourceLink:    fmt.Sprintf("https://security-tracker.debian.org/tracker/%s", cve.CveID),
 		Optional:      optinal,
 	}
+}
+
+var severityRank = []string{"unknown", "unimportant", "not yet assigned", "end-of-life", "low", "medium", "high"}
+
+// CompareSeverity compare severity by severity rank
+func (deb Debian) CompareSeverity(a, b string) int {
+	return cmp.Compare(slices.Index(severityRank, a), slices.Index(severityRank, b))
 }

@@ -1,21 +1,21 @@
 //go:build !scanner
-// +build !scanner
 
 package detector
 
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
-	"golang.org/x/exp/slices"
 	"golang.org/x/xerrors"
 
 	"github.com/future-architect/vuls/config"
 	"github.com/future-architect/vuls/constant"
 	"github.com/future-architect/vuls/contrib/owasp-dependency-check/parser"
 	"github.com/future-architect/vuls/cwe"
+	"github.com/future-architect/vuls/detector/vuls2"
 	"github.com/future-architect/vuls/gost"
 	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
@@ -46,11 +46,11 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 			r.ScannedCves = models.VulnInfos{}
 		}
 
-		if err := DetectLibsCves(&r, config.Conf.TrivyCacheDBDir, config.Conf.NoProgress); err != nil {
+		if err := DetectLibsCves(&r, config.Conf.TrivyOpts, config.Conf.LogOpts, config.Conf.NoProgress); err != nil {
 			return nil, xerrors.Errorf("Failed to fill with Library dependency: %w", err)
 		}
 
-		if err := DetectPkgCves(&r, config.Conf.OvalDict, config.Conf.Gost, config.Conf.LogOpts); err != nil {
+		if err := DetectPkgCves(&r, config.Conf.OvalDict, config.Conf.Gost, config.Conf.Vuls2, config.Conf.LogOpts, config.Conf.NoProgress); err != nil {
 			return nil, xerrors.Errorf("Failed to detect Pkg CVE: %w", err)
 		}
 
@@ -204,7 +204,7 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 			return nil, xerrors.Errorf("Failed to fill with gost: %w", err)
 		}
 
-		if err := FillCvesWithNvdJvnFortinet(&r, config.Conf.CveDict, config.Conf.LogOpts); err != nil {
+		if err := FillCvesWithGoCVEDictionary(&r, config.Conf.CveDict, config.Conf.LogOpts); err != nil {
 			return nil, xerrors.Errorf("Failed to fill with CVE: %w", err)
 		}
 
@@ -318,12 +318,17 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 
 // DetectPkgCves detects OS pkg cves
 // pass 2 configs
-func DetectPkgCves(r *models.ScanResult, ovalCnf config.GovalDictConf, gostCnf config.GostConf, logOpts logging.LogOpts) error {
+func DetectPkgCves(r *models.ScanResult, ovalCnf config.GovalDictConf, gostCnf config.GostConf, vuls2Conf config.Vuls2Conf, logOpts logging.LogOpts, noProgress bool) error {
 	// Pkg Scan
 	if isPkgCvesDetactable(r) {
 		// OVAL, gost(Debian Security Tracker) does not support Package for Raspbian, so skip it.
 		if r.Family == constant.Raspbian {
 			r = r.RemoveRaspbianPackFromResult()
+		}
+
+		// Vuls2
+		if err := vuls2.Detect(r, vuls2Conf, noProgress); err != nil {
+			return xerrors.Errorf("Failed to detect CVE with Vuls2: %w", err)
 		}
 
 		// OVAL
@@ -435,8 +440,8 @@ func DetectWordPressCves(r *models.ScanResult, wpCnf config.WpScanConf) error {
 	return nil
 }
 
-// FillCvesWithNvdJvnFortinet fills CVE detail with NVD, JVN, Fortinet
-func FillCvesWithNvdJvnFortinet(r *models.ScanResult, cnf config.GoCveDictConf, logOpts logging.LogOpts) (err error) {
+// FillCvesWithGoCVEDictionary fills CVE detail with NVD, JVN, Fortinet, MITRE
+func FillCvesWithGoCVEDictionary(r *models.ScanResult, cnf config.GoCveDictConf, logOpts logging.LogOpts) (err error) {
 	cveIDs := []string{}
 	for _, v := range r.ScannedCves {
 		cveIDs = append(cveIDs, v.CveID)
@@ -461,6 +466,7 @@ func FillCvesWithNvdJvnFortinet(r *models.ScanResult, cnf config.GoCveDictConf, 
 		nvds, exploits, mitigations := models.ConvertNvdToModel(d.CveID, d.Nvds)
 		jvns := models.ConvertJvnToModel(d.CveID, d.Jvns)
 		fortinets := models.ConvertFortinetToModel(d.CveID, d.Fortinets)
+		mitres := models.ConvertMitreToModel(d.CveID, d.Mitres)
 
 		alerts := fillCertAlerts(&d)
 		for cveID, vinfo := range r.ScannedCves {
@@ -470,22 +476,20 @@ func FillCvesWithNvdJvnFortinet(r *models.ScanResult, cnf config.GoCveDictConf, 
 				}
 				for _, con := range nvds {
 					if !con.Empty() {
-						vinfo.CveContents[con.Type] = []models.CveContent{con}
+						vinfo.CveContents[con.Type] = append(vinfo.CveContents[con.Type], con)
 					}
 				}
 				for _, con := range append(jvns, fortinets...) {
 					if !con.Empty() {
-						found := false
-						for _, cveCont := range vinfo.CveContents[con.Type] {
-							if con.SourceLink == cveCont.SourceLink {
-								found = true
-								break
-							}
-						}
-						if !found {
+						if !slices.ContainsFunc(vinfo.CveContents[con.Type], func(e models.CveContent) bool {
+							return con.SourceLink == e.SourceLink
+						}) {
 							vinfo.CveContents[con.Type] = append(vinfo.CveContents[con.Type], con)
 						}
 					}
+				}
+				for _, con := range mitres {
+					vinfo.CveContents[con.Type] = append(vinfo.CveContents[con.Type], con)
 				}
 				vinfo.AlertDict = alerts
 				vinfo.Exploits = append(vinfo.Exploits, exploits...)
@@ -538,6 +542,9 @@ func detectPkgsCvesWithOval(cnf config.GovalDictConf, r *models.ScanResult, logO
 	case constant.Debian, constant.Raspbian, constant.Ubuntu:
 		logging.Log.Infof("Skip OVAL and Scan with gost alone.")
 		logging.Log.Infof("%s: %d CVEs are detected with OVAL", r.FormatServerName(), 0)
+		return nil
+	case constant.RedHat, constant.CentOS, constant.Alma, constant.Rocky:
+		logging.Log.Debugf("Skip OVAL and Scan by Vuls2")
 		return nil
 	case constant.Windows, constant.MacOSX, constant.MacOSXServer, constant.MacOS, constant.MacOSServer, constant.FreeBSD, constant.ServerTypePseudo:
 		return nil
@@ -639,7 +646,9 @@ func DetectCpeURIsCves(r *models.ScanResult, cpes []Cpe, cnf config.GoCveDictCon
 			if val, ok := r.ScannedCves[detail.CveID]; ok {
 				val.CpeURIs = util.AppendIfMissing(val.CpeURIs, cpe.CpeURI)
 				val.Confidences.AppendIfMissing(maxConfidence)
-				val.DistroAdvisories = advisories
+				for _, adv := range advisories {
+					val.DistroAdvisories.AppendIfMissing(&adv)
+				}
 				r.ScannedCves[detail.CveID] = val
 			} else {
 				v := models.VulnInfo{
